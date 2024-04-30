@@ -5,6 +5,7 @@ import (
 	"log"
 	"os"
 	"os/exec"
+	"regexp"
 	"strconv"
 	"strings"
 )
@@ -49,12 +50,30 @@ func main() {
 
 	gitStatus(files)
 	gitLog(files)
-	show(dir, files)
+	show(dir, files, isGithub())
 }
 
 func link(url string, name string) string {
 	// hyperlink format: \e]8;;<url>\e\<link text>\e]8;;\e\
 	return fmt.Sprintf("\033]8;;%s\033\\%s\033]8;;\033\\", url, name)
+}
+
+func linkify(s string, github string) string {
+	issue_re := regexp.MustCompile(`#(\d+)`)
+
+	// Function to replace matches with OSC8 hyperlinks
+	replaceFunc := func(match string) string {
+		issueNumber, _ := strconv.Atoi(match[1:])
+		// I'm not sure how to link to _either_ a PR or an issue. Is there a
+		// URL that I can use that will automatically go to the appropriate
+		// place?
+		return link(fmt.Sprintf("%s/pull/%d", github, issueNumber), match)
+	}
+
+	// Replace all matches with OSC8 hyperlinks
+	output := issue_re.ReplaceAllStringFunc(s, replaceFunc)
+
+	return output
 }
 
 const (
@@ -63,7 +82,7 @@ const (
 	RESET = "\033[0m"
 )
 
-func show(dir string, files []*File) {
+func show(dir string, files []*File, githubUrl string) {
 	maxNameLen := 0
 	maxAuthorLen := 0
 	for _, file := range files {
@@ -77,7 +96,7 @@ func show(dir string, files []*File) {
 	// We have to calculate the file name's format separately, because it
 	// contains a big escaped hyperlink that printf won't format properly
 	fileNameFmt := "%-" + strconv.Itoa(maxNameLen) + "s"
-	fmtString := " %s %-" + strconv.Itoa(maxAuthorLen) + "s %-50s\n"
+	fmtString := " %s %-" + strconv.Itoa(maxAuthorLen) + "s "
 	for _, file := range files {
 		if file.isDir {
 			os.Stdout.WriteString(BLUE)
@@ -91,8 +110,30 @@ func show(dir string, files []*File) {
 		if file.isDir || file.isExe {
 			os.Stdout.WriteString(RESET)
 		}
-		fmt.Printf(fmtString, file.lastModified, file.author, file.message)
+		fmt.Printf(fmtString, file.lastModified, file.author)
+
+		// If this is a github repo, look for #<issue> links and linkify them.
+		// Otherwise just output the first 80 chars of the commit msg. Would it
+		// be better to use the full width of the terminal if available here,
+		// or just keep it shortish?
+		if len(githubUrl) > 0 {
+			os.Stdout.WriteString(linkify(file.message, githubUrl))
+			os.Stdout.WriteString("\n")
+		} else {
+			fmt.Fprintf(os.Stdout, "%-80s\n", file.message)
+		}
 	}
+}
+
+func isGithub() string {
+	cmd := exec.Command("git", "remote", "-v")
+	out, err := cmd.Output()
+	if err != nil {
+		log.Fatalf("Failed to get git status: %v", err)
+	}
+
+	re := regexp.MustCompile(`https://github.com/\w+/\w+`)
+	return string(re.Find(out))
 }
 
 // gitStatus accepts a dir and a slice of files, and adds the git status to
