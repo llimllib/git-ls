@@ -14,6 +14,7 @@ type File struct {
 	entry        os.DirEntry
 	status       string
 	author       string
+	authorEmail  string
 	hash         string
 	lastModified string
 	message      string
@@ -96,7 +97,6 @@ func show(dir string, files []*File, githubUrl string) {
 	// We have to calculate the file name's format separately, because it
 	// contains a big escaped hyperlink that printf won't format properly
 	fileNameFmt := "%-" + strconv.Itoa(maxNameLen) + "s"
-	fmtString := " %s %-" + strconv.Itoa(maxAuthorLen) + "s "
 	for _, file := range files {
 		if file.isDir {
 			os.Stdout.WriteString(BLUE)
@@ -110,15 +110,20 @@ func show(dir string, files []*File, githubUrl string) {
 		if file.isDir || file.isExe {
 			os.Stdout.WriteString(RESET)
 		}
-		fmt.Printf(fmtString, file.lastModified, file.author)
+		fmt.Fprintf(os.Stdout, " %s ", file.lastModified)
+
+		if len(githubUrl) > 0 {
+			fmt.Fprintf(os.Stdout, " %s ", link(fmt.Sprintf("%s/commits?author=%s", githubUrl, file.authorEmail), file.author))
+		} else {
+			fmt.Fprintf(os.Stdout, " %s ", file.author)
+		}
 
 		// If this is a github repo, look for #<issue> links and linkify them.
 		// Otherwise just output the first 80 chars of the commit msg. Would it
 		// be better to use the full width of the terminal if available here,
 		// or just keep it shortish?
 		if len(githubUrl) > 0 {
-			os.Stdout.WriteString(linkify(file.message, githubUrl))
-			os.Stdout.WriteString("\n")
+			fmt.Fprintf(os.Stdout, "%s\n", linkify(file.message, githubUrl))
 		} else {
 			fmt.Fprintf(os.Stdout, "%-80s\n", file.message)
 		}
@@ -132,7 +137,7 @@ func isGithub() string {
 		log.Fatalf("Failed to get git status: %v", err)
 	}
 
-	re := regexp.MustCompile(`https://github.com/\w+/\w+`)
+	re := regexp.MustCompile(`https://github.com/[\w-_]+/[\w-_]+`)
 	return string(re.Find(out))
 }
 
@@ -166,7 +171,7 @@ func gitStatus(files []*File) {
 
 func gitLog(files []*File) {
 	for _, file := range files {
-		cmd := exec.Command("git", "log", "-1", "--date=format:%Y-%m-%d", "--pretty=format:%ad|%an|%s", "--", file.entry.Name())
+		cmd := exec.Command("git", "log", "-1", "--date=format:%Y-%m-%d", "--pretty=format:%ad|%aN|%aE|%s", "--", file.entry.Name())
 		out, err := cmd.Output()
 		if err != nil {
 			log.Fatalf("Failed to get git info for file %s: %v", file.entry.Name(), err)
@@ -176,13 +181,14 @@ func gitLog(files []*File) {
 			continue
 		}
 
-		parts := strings.SplitN(string(out), "|", 3)
-		if len(parts) != 3 {
+		parts := strings.SplitN(string(out), "|", 4)
+		if len(parts) != 4 {
 			log.Fatalf("unexpected output format: %s", out)
 		}
 
 		file.lastModified = parts[0]
 		file.author = parts[1]
-		file.message = parts[2]
+		file.authorEmail = parts[2]
+		file.message = parts[3]
 	}
 }
