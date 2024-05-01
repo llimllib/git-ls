@@ -258,6 +258,9 @@ func gitDiffStat(files []*File) {
 			parts := strings.Split(line, "|")
 			path := first(strings.TrimSpace(parts[0]))
 			stats := strings.TrimSpace(parts[1])
+			// TODO: aggregate diffs. Right now we're just taking the first
+			// diff if a directory has diffs inside it, but we should be
+			// summing them up
 			diffStats[path] = stats
 		}
 	}
