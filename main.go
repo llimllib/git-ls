@@ -10,8 +10,6 @@ import (
 	"strings"
 )
 
-// Here's a comment I'm not going to keep
-
 type File struct {
 	entry        os.DirEntry
 	status       string
