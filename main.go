@@ -10,9 +10,12 @@ import (
 	"strings"
 )
 
+// Here's a comment I'm not going to keep
+
 type File struct {
 	entry        os.DirEntry
 	status       string
+	diffStat     string
 	author       string
 	authorEmail  string
 	hash         string
@@ -51,6 +54,7 @@ func main() {
 
 	gitStatus(files)
 	gitLog(files)
+	gitDiffStat(files)
 	show(dir, files, isGithub())
 }
 
@@ -83,21 +87,54 @@ const (
 	RESET = "\033[0m"
 )
 
+const ansiMarker = '\x1b'
+
+// width returns the printable width of a string in a terminal, by ignoring
+// ansi sequences. This version assumes all characters have a width of 1, which
+// is not true in general but is true in this program. modified from:
+// https://github.com/muesli/ansi/blob/276c6243b/buffer.go#L21
+func width(s string) int {
+	var n int
+	var ansi bool
+
+	for _, c := range s {
+		if c == ansiMarker {
+			ansi = true
+		} else if ansi {
+			// @, A-Z, a-z terminate the escape
+			if (c >= 0x40 && c <= 0x5a) || (c >= 0x61 && c <= 0x7a) {
+				ansi = false
+			}
+		} else {
+			// Just assuming single-width characters is good enough™ in this
+			// case
+			n += 1
+		}
+	}
+
+	return n
+}
+
 func show(dir string, files []*File, githubUrl string) {
+	maxDiffStat := 0
 	maxNameLen := 0
-	maxAuthorLen := 0
 	for _, file := range files {
+		if width(file.diffStat) > maxDiffStat {
+			maxDiffStat = width(file.diffStat)
+		}
 		if len(file.entry.Name()) > maxNameLen {
 			maxNameLen = len(file.entry.Name())
-		}
-		if len(file.author) > maxAuthorLen {
-			maxAuthorLen = len(file.author)
 		}
 	}
 	// We have to calculate the file name's format separately, because it
 	// contains a big escaped hyperlink that printf won't format properly
 	fileNameFmt := "%-" + strconv.Itoa(maxNameLen) + "s"
 	for _, file := range files {
+		fmt.Fprintf(os.Stdout, "%2s ", file.status)
+		fmt.Fprintf(os.Stdout, "%s", file.diffStat)
+		for i := 0; i < maxDiffStat-width(file.diffStat)+1; i++ {
+			fmt.Fprintf(os.Stdout, " ")
+		}
 		if file.isDir {
 			os.Stdout.WriteString(BLUE)
 		}
@@ -190,5 +227,44 @@ func gitLog(files []*File) {
 		file.author = parts[1]
 		file.authorEmail = parts[2]
 		file.message = parts[3]
+	}
+}
+
+// first returns the first part of a filepath. Given "some/file/path", it will
+// return "some". Modified from golang's built-in Split function:
+// https://github.com/golang/go/blob/c5698e315/src/internal/filepathlite/path.go#L204-L212
+//
+// Currently unused: the idea is that I'd like to use it to provide git diff
+// status for a directory, by summing up the changes contained within
+func first(path string) string {
+	i := 0
+	for i < len(path) && !os.IsPathSeparator(path[i]) {
+		i++
+	}
+	return path[:i]
+}
+
+func gitDiffStat(files []*File) {
+	cmd := exec.Command("git", "diff", "--color", "--stat", "--stat-graph-width=4", "--relative", "HEAD")
+	output, err := cmd.Output()
+	if err != nil {
+		log.Fatalf("Diffstat error: %v", err)
+	}
+
+	diffStats := make(map[string]string)
+	lines := strings.Split(string(output), "\n")
+	for _, line := range lines {
+		if strings.Contains(line, "|") {
+			parts := strings.Split(line, "|")
+			path := first(strings.TrimSpace(parts[0]))
+			stats := strings.TrimSpace(parts[1])
+			diffStats[path] = stats
+		}
+	}
+
+	for _, file := range files {
+		if stats, ok := diffStats[file.entry.Name()]; ok {
+			file.diffStat = stats
+		}
 	}
 }
