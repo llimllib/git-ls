@@ -29,8 +29,8 @@ In a properly-configured terminal, this means that you can click on filenames to
 
 ## building
 
-Run `go build`
+Run `make`, which will result in a `git-ls` binary in the current directory
 
 ## installing
 
-Put `git-ls` anywhere on your path, and you can then call it with `git ls`
+Put `git-ls` anywhere on your path, and you can then call it as `git ls`
