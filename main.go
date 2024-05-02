@@ -299,7 +299,7 @@ func gitStatus(files []*File) {
 
 func gitLog(files []*File) {
 	for _, file := range files {
-		cmd := exec.Command("git", "log", "-1", "--date=format:%Y-%m-%d", "--pretty=format:%ad|%aN|%aE|%s", "--", file.entry.Name())
+		cmd := exec.Command("git", "log", "-1", "--date=format:%Y-%m-%d", "--pretty=format:%h|%ad|%aN|%aE|%s", "--", file.entry.Name())
 		out, err := cmd.Output()
 		if err != nil {
 			log.Fatalf("Failed to get git info for file %s: %v", file.entry.Name(), err)
@@ -309,15 +309,16 @@ func gitLog(files []*File) {
 			continue
 		}
 
-		parts := strings.SplitN(string(out), "|", 4)
-		if len(parts) != 4 {
+		parts := strings.SplitN(string(out), "|", 5)
+		if len(parts) != 5 {
 			log.Fatalf("unexpected output format: %s", out)
 		}
 
-		file.lastModified = parts[0]
-		file.author = parts[1]
-		file.authorEmail = parts[2]
-		file.message = parts[3]
+		file.hash = parts[0]
+		file.lastModified = parts[1]
+		file.author = parts[2]
+		file.authorEmail = parts[3]
+		file.message = parts[4]
 	}
 }
 
