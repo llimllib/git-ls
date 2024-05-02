@@ -95,10 +95,11 @@ func linkify(s string, github string) string {
 }
 
 const (
-	BLUE  = "\033[34m"
-	GREEN = "\033[32m"
-	RED   = "\033[31m"
-	RESET = "\033[0m"
+	BLUE   = "\x1b[34m"
+	GREEN  = "\x1b[32m"
+	RED    = "\x1b[31m"
+	RESET  = "\x1b[0m"
+	YELLOW = "\x1b[33m"
 )
 
 const ansiMarker = '\x1b'
@@ -194,16 +195,18 @@ func show(dir string, files []*File, githubUrl string) {
 		// lineWidth tracks the width of the current line
 		lineWidth := 0
 
-		// print the file's git status
-		fmt.Fprintf(os.Stdout, fmt.Sprintf("%%%ds ", maxStatus), file.status)
-		lineWidth += maxStatus + 1
+		// print the file's git status. If there are no modified files, skip entirely
+		if maxStatus > 0 {
+			fmt.Fprintf(os.Stdout, fmt.Sprintf("%%%ds ", maxStatus), file.status)
+			lineWidth += maxStatus + 1
 
-		// print the diffstat summary for the file
-		fmt.Fprintf(os.Stdout, "%s", file.diffStat)
-		for i := 0; i < maxDiffStat-width(file.diffStat)+1; i++ {
-			fmt.Fprintf(os.Stdout, " ")
+			// print the diffstat summary for the file
+			fmt.Fprintf(os.Stdout, "%s", file.diffStat)
+			for i := 0; i < maxDiffStat-width(file.diffStat)+1; i++ {
+				fmt.Fprintf(os.Stdout, " ")
+			}
+			lineWidth += 5
 		}
-		lineWidth += 5
 
 		if file.isDir {
 			os.Stdout.WriteString(BLUE)
@@ -236,9 +239,9 @@ func show(dir string, files []*File, githubUrl string) {
 			// a git command, but I'm not sure how to give a URL for the command
 			// `git log --author=Janet`
 			authorLink := fmt.Sprintf("%s/commits?author=%s", githubUrl, file.authorEmail)
-			fmt.Fprintf(os.Stdout, " %s", link(authorLink, file.author[:authorWidth]))
+			fmt.Fprintf(os.Stdout, " %s%s%s", YELLOW, link(authorLink, file.author[:authorWidth]), RESET)
 		} else {
-			fmt.Fprintf(os.Stdout, " %s", file.author[:authorWidth])
+			fmt.Fprintf(os.Stdout, " %s%s%s", YELLOW, file.author[:authorWidth], RESET)
 		}
 
 		// If this is a github repo, look for #<issue> links and linkify them.
