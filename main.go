@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 )
@@ -114,9 +115,13 @@ func width(s string) int {
 }
 
 func show(dir string, files []*File, githubUrl string) {
+	maxStatus := 0
 	maxDiffStat := 0
 	maxNameLen := 0
 	for _, file := range files {
+		if len(file.status) > maxStatus {
+			maxStatus = len(file.status)
+		}
 		if width(file.diffStat) > maxDiffStat {
 			maxDiffStat = width(file.diffStat)
 		}
@@ -128,7 +133,9 @@ func show(dir string, files []*File, githubUrl string) {
 	// contains a big escaped hyperlink that printf won't format properly
 	fileNameFmt := "%-" + strconv.Itoa(maxNameLen) + "s"
 	for _, file := range files {
-		fmt.Fprintf(os.Stdout, "%2s ", file.status)
+		// print the file's git status
+		fmt.Fprintf(os.Stdout, fmt.Sprintf("%%%ds ", maxStatus), file.status)
+		// print the diffstat summary for the file
 		fmt.Fprintf(os.Stdout, "%s", file.diffStat)
 		for i := 0; i < maxDiffStat-width(file.diffStat)+1; i++ {
 			fmt.Fprintf(os.Stdout, " ")
@@ -139,6 +146,7 @@ func show(dir string, files []*File, githubUrl string) {
 		if file.isExe {
 			os.Stdout.WriteString(GREEN)
 		}
+		// link the file name to the file's location
 		os.Stdout.WriteString(link(
 			"file:"+dir+"/"+file.entry.Name(),
 			fmt.Sprintf(fileNameFmt, file.entry.Name())))
@@ -148,7 +156,10 @@ func show(dir string, files []*File, githubUrl string) {
 		fmt.Fprintf(os.Stdout, " %s ", file.lastModified)
 
 		if len(githubUrl) > 0 {
-			fmt.Fprintf(os.Stdout, " %s ", link(fmt.Sprintf("%s/commits?author=%s", githubUrl, file.authorEmail), file.author))
+			// if this is a github repo, link the author name to their commits
+			// page on github
+			authorLink := fmt.Sprintf("%s/commits?author=%s", githubUrl, file.authorEmail)
+			fmt.Fprintf(os.Stdout, " %s ", link(authorLink, file.author))
 		} else {
 			fmt.Fprintf(os.Stdout, " %s ", file.author)
 		}
@@ -186,20 +197,20 @@ func gitStatus(files []*File) {
 		log.Fatalf("Failed to get git status: %v", err)
 	}
 
-	gitStatusMap := make(map[string]string)
+	gitStatusMap := make(map[string][]string)
 	lines := strings.Split(string(out), "\n")
 
 	for _, line := range lines {
 		if len(line) >= 3 {
 			status := line[:2]
 			fileName := first(line[3:])
-			gitStatusMap[fileName] = status
+			gitStatusMap[fileName] = append(gitStatusMap[fileName], strings.TrimSpace(status))
 		}
 	}
 
 	for _, file := range files {
 		if fileStatus, ok := gitStatusMap[file.entry.Name()]; ok {
-			file.status = fileStatus
+			file.status = strings.Join(slices.Compact(fileStatus), ",")
 		}
 	}
 }
@@ -242,6 +253,12 @@ func first(path string) string {
 	return path[:i]
 }
 
+// git diff output:
+// $ git diff --numstat --relative HEAD
+// 14      5       main.go
+// 0       0       static/fake1
+// 0       0       static/fake2
+// -       -       static/gitls.png
 func gitDiffStat(files []*File) {
 	cmd := exec.Command("git", "diff", "--color", "--stat", "--stat-graph-width=4", "--relative", "HEAD")
 	output, err := cmd.Output()
