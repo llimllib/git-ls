@@ -65,7 +65,9 @@ func main() {
 
 	// generate a diffStat graph for every file
 	for _, file := range files {
-		file.diffStat = makeDiffGraph(file)
+		// eventually I'd probably like to make width a flag. For now,
+		// width == 4
+		file.diffStat = makeDiffGraph(file, 4)
 	}
 
 	show(dir, files, isGithub())
@@ -73,7 +75,7 @@ func main() {
 
 func link(url string, name string) string {
 	// hyperlink format: \e]8;;<url>\e\<link text>\e]8;;\e\
-	return fmt.Sprintf("\033]8;;%s\033\\%s\033]8;;\033\\", url, name)
+	return fmt.Sprintf("\x1b]8;;%s\x1b\\%s\x1b]8;;\x1b\\", url, name)
 }
 
 func linkify(s string, github string) string {
@@ -143,35 +145,44 @@ func columns(fd uintptr) int {
 	return int(sz.cols)
 }
 
-// makeDiffGraph turns the total diff for a file/directory into a diff graph
-// string. Currently, this function is terrible. TODO: Copy the git logic for
-// this, and make diff width configurable maybe:
+// Pulled straight from git:
 // https://github.com/git/git/blob/d4cc1ec3/diff.c#L2862-L2874
-func makeDiffGraph(file *File) string {
+func scale_linear(n int, width int, max_change int) int {
+	if n == 0 {
+		return 0
+	}
+	/*
+	 * make sure that at least one '-' or '+' is printed if
+	 * there is any change to this path. The easiest way is to
+	 * scale linearly as if the allotted width is one column shorter
+	 * than it is, and then add 1 to the result.
+	 */
+	return 1 + (n * (width - 1) / max_change)
+}
+
+// makeDiffGraph turns the total diff for a file/directory into a diff graph
+// string.
+func makeDiffGraph(file *File, width int) string {
 	if file.diffSum == nil {
 		return ""
 	}
 	plus := file.diffSum.plus
 	minus := file.diffSum.minus
-	if plus == 0 && minus == 0 {
-		return ""
+	fmt.Printf("%d %d\n", plus, minus)
+	if plus+minus <= width {
+		return fmt.Sprintf("%s%s%s%s%s",
+			GREEN,
+			strings.Repeat("+", plus),
+			RED,
+			strings.Repeat("-", plus),
+			RESET)
 	}
-	if plus == 0 {
-		return fmt.Sprintf("%s----%s", RED, RESET)
-	}
-	if minus == 0 {
-		return fmt.Sprintf("%s++++%s", GREEN, RESET)
-	}
-	if plus > minus {
-		return fmt.Sprintf("%s+++%s-%s", GREEN, RED, RESET)
-	}
-	if plus == minus {
-		return fmt.Sprintf("%s++%s--%s", GREEN, RED, RESET)
-	}
-	if plus < minus {
-		return fmt.Sprintf("%s+%s---%s", GREEN, RED, RESET)
-	}
-	panic("not possible")
+	return fmt.Sprintf("%s%s%s%s%s",
+		GREEN,
+		strings.Repeat("+", scale_linear(plus, width, plus+minus)),
+		RED,
+		strings.Repeat("-", scale_linear(minus, width, plus+minus)),
+		RESET)
 }
 
 func show(dir string, files []*File, githubUrl string) {
@@ -253,7 +264,6 @@ func show(dir string, files []*File, githubUrl string) {
 			continue
 		}
 		messageWidth := min(len(file.message), maxWidth-1-lineWidth)
-		// fmt.Printf("%d %d %d %d\n", len(file.message), maxWidth-1-lineWidth, maxWidth, lineWidth)
 		if len(githubUrl) > 0 {
 			fmt.Fprintf(os.Stdout, " %s\n", linkify(file.message[:messageWidth], githubUrl))
 		} else {
