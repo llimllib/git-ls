@@ -9,6 +9,8 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"syscall"
+	"unsafe"
 )
 
 type Diff struct {
@@ -127,6 +129,19 @@ func width(s string) int {
 	return n
 }
 
+type windowSize struct {
+	rows uint16
+	cols uint16
+}
+
+// from https://github.com/epam/hubctl/blob/6f86e6663/cmd/hub/lifecycle/terminal.go#L59
+func columns(fd uintptr) int {
+	var sz windowSize
+	_, _, _ = syscall.Syscall(syscall.SYS_IOCTL,
+		fd, uintptr(syscall.TIOCGWINSZ), uintptr(unsafe.Pointer(&sz)))
+	return int(sz.cols)
+}
+
 // makeDiffGraph turns the total diff for a file/directory into a diff graph
 // string. Currently, this function is terrible. TODO: Copy the git logic for
 // this, and make diff width configurable maybe:
@@ -159,6 +174,7 @@ func makeDiffGraph(file *File) string {
 }
 
 func show(dir string, files []*File, githubUrl string) {
+	maxWidth := columns(os.Stdout.Fd())
 	maxStatus := 0
 	maxDiffStat := 0
 	maxNameLen := 0
@@ -173,17 +189,22 @@ func show(dir string, files []*File, githubUrl string) {
 			maxNameLen = len(file.entry.Name())
 		}
 	}
-	// We have to calculate the file name's format separately, because it
-	// contains a big escaped hyperlink that printf won't format properly
-	fileNameFmt := "%-" + strconv.Itoa(maxNameLen) + "s"
+
 	for _, file := range files {
+		// lineWidth tracks the width of the current line
+		lineWidth := 0
+
 		// print the file's git status
 		fmt.Fprintf(os.Stdout, fmt.Sprintf("%%%ds ", maxStatus), file.status)
+		lineWidth += maxStatus + 1
+
 		// print the diffstat summary for the file
 		fmt.Fprintf(os.Stdout, "%s", file.diffStat)
 		for i := 0; i < maxDiffStat-width(file.diffStat)+1; i++ {
 			fmt.Fprintf(os.Stdout, " ")
 		}
+		lineWidth += 5
+
 		if file.isDir {
 			os.Stdout.WriteString(BLUE)
 		}
@@ -193,29 +214,47 @@ func show(dir string, files []*File, githubUrl string) {
 		// link the file name to the file's location
 		os.Stdout.WriteString(link(
 			"file:"+dir+"/"+file.entry.Name(),
-			fmt.Sprintf(fileNameFmt, file.entry.Name())))
+			fmt.Sprintf(fmt.Sprintf("%%-%ds", maxNameLen), file.entry.Name())))
 		if file.isDir || file.isExe {
 			os.Stdout.WriteString(RESET)
 		}
-		fmt.Fprintf(os.Stdout, " %s ", file.lastModified)
+		lineWidth += maxNameLen
 
+		// write the last modified date
+		fmt.Fprintf(os.Stdout, " %s", file.lastModified)
+		lineWidth += len(file.lastModified) + 1
+
+		if lineWidth >= maxWidth {
+			fmt.Println("")
+			continue
+		}
+		authorWidth := min(len(file.author), maxWidth-1-lineWidth)
+		lineWidth += authorWidth + 1
 		if len(githubUrl) > 0 {
 			// if this is a github repo, link the author name to their commits
-			// page on github
+			// page on github. It would be cool to hyperlink the author to
+			// a git command, but I'm not sure how to give a URL for the command
+			// `git log --author=Janet`
 			authorLink := fmt.Sprintf("%s/commits?author=%s", githubUrl, file.authorEmail)
-			fmt.Fprintf(os.Stdout, " %s ", link(authorLink, file.author))
+			fmt.Fprintf(os.Stdout, " %s", link(authorLink, file.author[:authorWidth]))
 		} else {
-			fmt.Fprintf(os.Stdout, " %s ", file.author)
+			fmt.Fprintf(os.Stdout, " %s", file.author[:authorWidth])
 		}
 
 		// If this is a github repo, look for #<issue> links and linkify them.
 		// Otherwise just output the first 80 chars of the commit msg. Would it
 		// be better to use the full width of the terminal if available here,
 		// or just keep it shortish?
+		if lineWidth >= maxWidth {
+			fmt.Println("")
+			continue
+		}
+		messageWidth := min(len(file.message), maxWidth-1-lineWidth)
+		// fmt.Printf("%d %d %d %d\n", len(file.message), maxWidth-1-lineWidth, maxWidth, lineWidth)
 		if len(githubUrl) > 0 {
-			fmt.Fprintf(os.Stdout, "%s\n", linkify(file.message, githubUrl))
+			fmt.Fprintf(os.Stdout, " %s\n", linkify(file.message[:messageWidth], githubUrl))
 		} else {
-			fmt.Fprintf(os.Stdout, "%-80s\n", file.message)
+			fmt.Fprintf(os.Stdout, " %s\n", file.message[:messageWidth])
 		}
 	}
 }
