@@ -44,7 +44,7 @@ const (
 )
 
 func main() {
-	if os.Args[1] == "--version" {
+	if len(os.Args) > 1 && os.Args[1] == "--version" {
 		fmt.Printf("%s\n", VERSION)
 		os.Exit(0)
 	}
