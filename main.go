@@ -234,9 +234,11 @@ func show(out io.Writer, maxWidth int, files []*File, githubUrl string) {
 			fmt.Fprintf(out, "%s", GREEN)
 		}
 		// link the file name to the file's location
-		fmt.Fprintf(out, "%s", link(
-			"file:"+file.entry.Name(),
-			fmt.Sprintf(fmt.Sprintf("%%-%ds", maxNameLen), file.entry.Name())))
+		fmt.Fprintf(out, "%s", link("file:"+file.entry.Name(), file.entry.Name()))
+		// pad spaces to the right up to maxNameLen
+		for i := 0; i < maxNameLen-len(file.entry.Name()); i++ {
+			fmt.Fprintf(out, " ")
+		}
 		if file.isDir || file.isExe {
 			fmt.Fprintf(out, "%s", RESET)
 		}
