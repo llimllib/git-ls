@@ -14,6 +14,8 @@ import (
 	"unsafe"
 )
 
+const VERSION = "1.0.0"
+
 type Diff struct {
 	plus  int
 	minus int
@@ -42,6 +44,11 @@ const (
 )
 
 func main() {
+	if os.Args[1] == "--version" {
+		fmt.Printf("%s\n", VERSION)
+		os.Exit(0)
+	}
+
 	var dir string
 	if len(os.Args) > 1 {
 		dir = os.Args[1]
