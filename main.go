@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"io"
 	"log"
 	"os"
 	"os/exec"
@@ -31,6 +32,14 @@ type File struct {
 	isDir        bool
 	isExe        bool
 }
+
+const (
+	BLUE   = "\x1b[34m"
+	GREEN  = "\x1b[32m"
+	RED    = "\x1b[31m"
+	RESET  = "\x1b[0m"
+	YELLOW = "\x1b[33m"
+)
 
 func main() {
 	var dir string
@@ -70,7 +79,9 @@ func main() {
 		file.diffStat = makeDiffGraph(file, 4)
 	}
 
-	show(dir, files, isGithub())
+	maxWidth := columns(os.Stdout.Fd())
+	fmt.Printf("On branch %s%s%s\n\n", RED, gitCurrentBranch(), RESET)
+	show(os.Stdout, maxWidth, files, isGithub())
 }
 
 func link(url string, name string) string {
@@ -95,14 +106,6 @@ func linkify(s string, github string) string {
 
 	return output
 }
-
-const (
-	BLUE   = "\x1b[34m"
-	GREEN  = "\x1b[32m"
-	RED    = "\x1b[31m"
-	RESET  = "\x1b[0m"
-	YELLOW = "\x1b[33m"
-)
 
 const ansiMarker = '\x1b'
 
@@ -168,7 +171,6 @@ func makeDiffGraph(file *File, width int) string {
 	}
 	plus := file.diffSum.plus
 	minus := file.diffSum.minus
-	fmt.Printf("%d %d\n", plus, minus)
 	if plus+minus <= width {
 		return fmt.Sprintf("%s%s%s%s%s",
 			GREEN,
@@ -185,8 +187,7 @@ func makeDiffGraph(file *File, width int) string {
 		RESET)
 }
 
-func show(dir string, files []*File, githubUrl string) {
-	maxWidth := columns(os.Stdout.Fd())
+func show(out io.Writer, maxWidth int, files []*File, githubUrl string) {
 	maxStatus := 0
 	maxDiffStat := 0
 	maxNameLen := 0
@@ -208,34 +209,34 @@ func show(dir string, files []*File, githubUrl string) {
 
 		// print the file's git status. If there are no modified files, skip entirely
 		if maxStatus > 0 {
-			fmt.Fprintf(os.Stdout, fmt.Sprintf("%%%ds ", maxStatus), file.status)
+			fmt.Fprintf(out, fmt.Sprintf("%%%ds ", maxStatus), file.status)
 			lineWidth += maxStatus + 1
 
 			// print the diffstat summary for the file
-			fmt.Fprintf(os.Stdout, "%s", file.diffStat)
+			fmt.Fprintf(out, "%s", file.diffStat)
 			for i := 0; i < maxDiffStat-width(file.diffStat)+1; i++ {
-				fmt.Fprintf(os.Stdout, " ")
+				fmt.Fprintf(out, " ")
 			}
 			lineWidth += 5
 		}
 
 		if file.isDir {
-			os.Stdout.WriteString(BLUE)
+			fmt.Fprintf(out, "%s", BLUE)
 		}
 		if file.isExe {
-			os.Stdout.WriteString(GREEN)
+			fmt.Fprintf(out, "%s", GREEN)
 		}
 		// link the file name to the file's location
-		os.Stdout.WriteString(link(
-			"file:"+dir+"/"+file.entry.Name(),
+		fmt.Fprintf(out, "%s", link(
+			"file:"+file.entry.Name(),
 			fmt.Sprintf(fmt.Sprintf("%%-%ds", maxNameLen), file.entry.Name())))
 		if file.isDir || file.isExe {
-			os.Stdout.WriteString(RESET)
+			fmt.Fprintf(out, "%s", RESET)
 		}
 		lineWidth += maxNameLen
 
 		// write the last modified date
-		fmt.Fprintf(os.Stdout, " %s", file.lastModified)
+		fmt.Fprintf(out, " %s", file.lastModified)
 		lineWidth += len(file.lastModified) + 1
 
 		if lineWidth >= maxWidth {
@@ -250,9 +251,9 @@ func show(dir string, files []*File, githubUrl string) {
 			// a git command, but I'm not sure how to give a URL for the command
 			// `git log --author=Janet`
 			authorLink := fmt.Sprintf("%s/commits?author=%s", githubUrl, file.authorEmail)
-			fmt.Fprintf(os.Stdout, " %s%s%s", YELLOW, link(authorLink, file.author[:authorWidth]), RESET)
+			fmt.Fprintf(out, " %s%s%s", YELLOW, link(authorLink, file.author[:authorWidth]), RESET)
 		} else {
-			fmt.Fprintf(os.Stdout, " %s%s%s", YELLOW, file.author[:authorWidth], RESET)
+			fmt.Fprintf(out, " %s%s%s", YELLOW, file.author[:authorWidth], RESET)
 		}
 
 		// If this is a github repo, look for #<issue> links and linkify them.
@@ -265,9 +266,9 @@ func show(dir string, files []*File, githubUrl string) {
 		}
 		messageWidth := min(len(file.message), maxWidth-1-lineWidth)
 		if len(githubUrl) > 0 {
-			fmt.Fprintf(os.Stdout, " %s\n", linkify(file.message[:messageWidth], githubUrl))
+			fmt.Fprintf(out, " %s\n", linkify(file.message[:messageWidth], githubUrl))
 		} else {
-			fmt.Fprintf(os.Stdout, " %s\n", file.message[:messageWidth])
+			fmt.Fprintf(out, " %s\n", file.message[:messageWidth])
 		}
 	}
 }
@@ -283,10 +284,19 @@ func isGithub() string {
 	return string(re.Find(out))
 }
 
+func gitCurrentBranch() string {
+	cmd := exec.Command("git", "rev-parse", "--abbrev-ref", "HEAD")
+	out, err := cmd.Output()
+	if err != nil {
+		log.Fatalf("Failed to get git status: %v", err)
+	}
+	return strings.TrimSpace(string(out))
+}
+
 // gitStatus accepts a dir and a slice of files, and adds the git status to
 // each file in place
 func gitStatus(files []*File) {
-	cmd := exec.Command("git", "status", "--porcelain")
+	cmd := exec.Command("git", "status", "--porcelain", "--ignored")
 	out, err := cmd.Output()
 	if err != nil {
 		log.Fatalf("Failed to get git status: %v", err)
@@ -297,15 +307,21 @@ func gitStatus(files []*File) {
 
 	for _, line := range lines {
 		if len(line) >= 3 {
-			status := line[:2]
+			status := strings.TrimSpace(line[:2])
 			fileName := first(line[3:])
-			gitStatusMap[fileName] = append(gitStatusMap[fileName], strings.TrimSpace(status))
+			if status == "!!" {
+				status = "I"
+			}
+			gitStatusMap[fileName] = append(gitStatusMap[fileName], status)
 		}
 	}
 
 	for _, file := range files {
 		if fileStatus, ok := gitStatusMap[file.entry.Name()]; ok {
 			file.status = strings.Join(slices.Compact(fileStatus), ",")
+		}
+		if file.entry.Name() == ".git" {
+			file.status = "*"
 		}
 	}
 }
