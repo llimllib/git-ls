@@ -6,6 +6,7 @@ import (
 	"log"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"regexp"
 	"slices"
 	"strconv"
@@ -14,7 +15,7 @@ import (
 	"unsafe"
 )
 
-const VERSION = "1.3.0"
+const VERSION = "1.4.0"
 
 type Diff struct {
 	plus  int
@@ -42,6 +43,13 @@ const (
 	RESET  = "\x1b[0m"
 	YELLOW = "\x1b[33m"
 )
+
+func must[T any](a T, e error) T {
+	if e != nil {
+		log.Fatalf("%v", e)
+	}
+	return a
+}
 
 func main() {
 	if len(os.Args) > 1 && os.Args[1] == "--version" {
@@ -88,7 +96,7 @@ func main() {
 
 	maxWidth := columns(os.Stdout.Fd())
 	fmt.Printf("On branch %s%s%s\n\n", RED, gitCurrentBranch(), RESET)
-	show(os.Stdout, maxWidth, files, isGithub())
+	show(os.Stdout, maxWidth, files, isGithub(), must(filepath.Abs(dir)))
 }
 
 func link(url string, name string) string {
@@ -192,7 +200,7 @@ func makeDiffGraph(file *File, width int) string {
 		RESET)
 }
 
-func show(out io.Writer, maxWidth int, files []*File, githubUrl string) {
+func show(out io.Writer, maxWidth int, files []*File, githubUrl string, dir string) {
 	maxStatus := 0
 	maxDiffStat := 0
 	maxNameLen := 0
@@ -232,7 +240,8 @@ func show(out io.Writer, maxWidth int, files []*File, githubUrl string) {
 			fmt.Fprintf(out, "%s", GREEN)
 		}
 		// link the file name to the file's location
-		fmt.Fprintf(out, "%s", link("file:"+file.entry.Name(), file.entry.Name()))
+		fileUrl := fmt.Sprintf("file://%s%s", must(os.Hostname()), filepath.Join(dir, file.entry.Name()))
+		fmt.Fprintf(out, "%s", link(fileUrl, file.entry.Name()))
 		// pad spaces to the right up to maxNameLen
 		for i := 0; i < maxNameLen-len(file.entry.Name()); i++ {
 			fmt.Fprintf(out, " ")
