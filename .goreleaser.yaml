@@ -43,3 +43,13 @@ changelog:
     exclude:
       - "^docs:"
       - "^test:"
+
+brews:
+  - name: git-ls
+    homepage: "https://github.com/llimllib/git-ls"
+    description: "list the files in the current directory along with a useful summary and helpful hyperlinks."
+    license: "Unlicense"
+    repository:
+      owner: llimllib
+      name: homebrew-git-ls
+      branch: main
