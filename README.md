@@ -14,10 +14,14 @@ In a terminal that supports [OSC8 links](https://gist.github.com/egmontkob/eb114
 
 In a properly-configured terminal, this means that you can click on filenames to open them in your preferred editor, or click on a PR number in a commit status to go straight to that PR in your browser.
 
+## installing
+
+- on a mac: `brew tap llimllib/git-ls && brew install git-ls`
+- everywhere else: download the [latest release](https://github.com/llimllib/git-ls/releases) for your platform
+  - Windows users: I'd love your help to make this work on windows! Please leave a comment at issue [#14](https://github.com/llimllib/git-ls/issues/14)
+
+Put `git-ls` anywhere on your path, and you can then call it as `git ls`
+
 ## building
 
 Run `make`, which will result in a `git-ls` binary in the current directory
-
-## installing
-
-Put `git-ls` anywhere on your path, and you can then call it as `git ls`
