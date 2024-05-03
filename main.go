@@ -83,9 +83,9 @@ func main() {
 		})
 	}
 
-	gitStatus(files)
-	gitLog(files)
-	gitDiffStat(files)
+	fileStatus(gitStatus(), files)
+	parseGitLog(files, gitLog)
+	parseDiffStat(gitDiffStat(), files)
 
 	// generate a diffStat graph for every file
 	for _, file := range files {
@@ -96,7 +96,7 @@ func main() {
 
 	maxWidth := columns(os.Stdout.Fd())
 	fmt.Printf("On branch %s%s%s\n\n", RED, gitCurrentBranch(), RESET)
-	show(os.Stdout, maxWidth, files, isGithub(), must(filepath.Abs(dir)))
+	show(os.Stdout, maxWidth, files, isGithub(gitRemotes()), must(filepath.Abs(dir)))
 }
 
 func link(url string, name string) string {
@@ -289,13 +289,16 @@ func show(out io.Writer, maxWidth int, files []*File, githubUrl string, dir stri
 	}
 }
 
-func isGithub() string {
+func gitRemotes() []byte {
 	cmd := exec.Command("git", "remote", "-v")
 	out, err := cmd.Output()
 	if err != nil {
 		log.Fatalf("Failed to get git status: %v", err)
 	}
+	return out
+}
 
+func isGithub(out []byte) string {
 	githubRe := regexp.MustCompile(`github.com[:/]([\w-_]+)/([\w-_]+)`)
 	matches := githubRe.FindStringSubmatch(string(out))
 	if len(matches) == 3 {
@@ -315,15 +318,18 @@ func gitCurrentBranch() string {
 
 // gitStatus accepts a dir and a slice of files, and adds the git status to
 // each file in place
-func gitStatus(files []*File) {
+func gitStatus() []byte {
 	cmd := exec.Command("git", "status", "--porcelain", "--ignored")
 	out, err := cmd.Output()
 	if err != nil {
 		log.Fatalf("Failed to get git status: %v", err)
 	}
+	return out
+}
 
+func fileStatus(status []byte, files []*File) {
 	gitStatusMap := make(map[string][]string)
-	lines := strings.Split(string(out), "\n")
+	lines := strings.Split(string(status), "\n")
 
 	for _, line := range lines {
 		if len(line) >= 3 {
@@ -346,21 +352,28 @@ func gitStatus(files []*File) {
 	}
 }
 
-func gitLog(files []*File) {
+func gitLog(file *File) []byte {
+	cmd := exec.Command("git", "log", "-1", "--date=format:%Y-%m-%d",
+		"--pretty=format:%h%x00%ad%x00%aN%x00%aE%x00%s", "--", file.entry.Name())
+	out, err := cmd.Output()
+	if err != nil {
+		log.Fatalf("Failed to get git info for file %s: %v", file.entry.Name(), err)
+	}
+	fmt.Printf("%#v\n", out)
+	return out
+}
+
+func parseGitLog(files []*File, gitLog func(file *File) []byte) {
 	for _, file := range files {
-		cmd := exec.Command("git", "log", "-1", "--date=format:%Y-%m-%d", "--pretty=format:%h|%ad|%aN|%aE|%s", "--", file.entry.Name())
-		out, err := cmd.Output()
-		if err != nil {
-			log.Fatalf("Failed to get git info for file %s: %v", file.entry.Name(), err)
-		}
+		out := gitLog(file)
 
 		if len(out) == 0 {
 			continue
 		}
 
-		parts := strings.SplitN(string(out), "|", 5)
+		parts := strings.SplitN(string(out), "\x00", 5)
 		if len(parts) != 5 {
-			log.Fatalf("unexpected output format: %s", out)
+			log.Fatalf("unexpected output format: %#v", out)
 		}
 
 		file.hash = parts[0]
@@ -393,15 +406,18 @@ func diffInt(s string) int {
 	return i
 }
 
-func gitDiffStat(files []*File) {
+func gitDiffStat() []byte {
 	cmd := exec.Command("git", "diff", "--numstat", "--relative", "HEAD")
 	output, err := cmd.Output()
 	if err != nil {
 		log.Fatalf("Diffstat error: %v", err)
 	}
+	return output
+}
 
+func parseDiffStat(diffStat []byte, files []*File) {
 	diffStats := make(map[string][]Diff)
-	lines := strings.Split(strings.TrimSpace(string(output)), "\n")
+	lines := strings.Split(strings.TrimSpace(string(diffStat)), "\n")
 	for _, line := range lines {
 		parts := strings.Split(line, "\t")
 		if len(parts) < 3 {
