@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"os"
 	"testing"
 )
@@ -182,6 +183,44 @@ func TestParseGitLog(t *testing.T) {
 				if file.message != expected[5] {
 					t.Errorf("Unexpected message for file %s: got %s, want %s", file.entry.Name(), file.message, expected[5])
 				}
+			}
+		})
+	}
+}
+
+func TestLinkify(t *testing.T) {
+	testCases := []struct {
+		name     string
+		test     string
+		expected string
+	}{
+		{
+			name:     "Basic test",
+			test:     "Some message",
+			expected: link("https://github.com/a/b/commit/123abc", "Some message"),
+		},
+		{
+			name: "One issue link",
+			test: "fixes issue (#17)",
+			expected: link("https://github.com/a/b/commit/123abc", "fixes issue (") +
+				link("https://github.com/a/b/pull/17", fmt.Sprintf("%s%s%s", BLUE, "#17", RESET)) +
+				link("https://github.com/a/b/commit/123abc", ")"),
+		},
+		{
+			name: "Two issue links",
+			test: "fixes issue (#17) closes (#99)",
+			expected: link("https://github.com/a/b/commit/123abc", "fixes issue (") +
+				link("https://github.com/a/b/pull/17", fmt.Sprintf("%s%s%s", BLUE, "#17", RESET)) +
+				link("https://github.com/a/b/commit/123abc", ") closes (") +
+				link("https://github.com/a/b/pull/99", fmt.Sprintf("%s%s%s", BLUE, "#99", RESET)) +
+				link("https://github.com/a/b/commit/123abc", ")"),
+		},
+	}
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			s := linkify(tc.test, "https://github.com/a/b", "123abc")
+			if s != tc.expected {
+				t.Errorf("Expected\n%#v !=\n%#v", tc.expected, s)
 			}
 		})
 	}

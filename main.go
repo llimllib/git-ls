@@ -15,7 +15,7 @@ import (
 	"unsafe"
 )
 
-const VERSION = "1.5.0"
+const VERSION = "2.0.0"
 
 type Diff struct {
 	plus  int
@@ -104,18 +104,22 @@ func link(url string, name string) string {
 	return fmt.Sprintf("\x1b]8;;%s\x1b\\%s\x1b]8;;\x1b\\", url, name)
 }
 
-func linkify(s string, github string, hash string) string {
-	ix := 0
+func linkify(commitMsg string, github string, hash string) string {
 	issueRe := regexp.MustCompile(`#(\d+)`)
-	issueIx := issueRe.FindStringIndex(s)
+	issueIx := issueRe.FindStringIndex(commitMsg)
 	out := make([]string, 0, 16)
 	for issueIx != nil {
-		out = append(out, link(fmt.Sprintf("%s/commit/%s", github, hash), s[ix:issueIx[0]]))
-		out = append(out, link(fmt.Sprintf("%s/pull/%s", github, s[issueIx[0]+1:issueIx[1]]), s[issueIx[0]:issueIx[1]]))
-		ix = issueIx[1]
-		issueIx = issueRe.FindStringIndex(s[ix:])
+		commitUrl := fmt.Sprintf("%s/commit/%s", github, hash)
+		out = append(out, link(commitUrl, commitMsg[:issueIx[0]]))
+
+		issueUrl := fmt.Sprintf("%s/pull/%s", github, commitMsg[issueIx[0]+1:issueIx[1]])
+		issueText := fmt.Sprintf("%s%s%s", BLUE, commitMsg[issueIx[0]:issueIx[1]], RESET)
+		out = append(out, link(issueUrl, issueText))
+
+		commitMsg = commitMsg[issueIx[1]:]
+		issueIx = issueRe.FindStringIndex(commitMsg)
 	}
-	out = append(out, link(fmt.Sprintf("%s/commit/%s", github, hash), s[ix:]))
+	out = append(out, link(fmt.Sprintf("%s/commit/%s", github, hash), commitMsg))
 
 	return strings.Join(out, "")
 }
@@ -359,7 +363,6 @@ func gitLog(file *File) []byte {
 	if err != nil {
 		log.Fatalf("Failed to get git info for file %s: %v", file.entry.Name(), err)
 	}
-	fmt.Printf("%#v\n", out)
 	return out
 }
 
