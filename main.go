@@ -314,7 +314,7 @@ func gitStatus(files []*File) {
 
 	for _, line := range lines {
 		if len(line) >= 3 {
-			status := strings.TrimSpace(line[:2])
+			status := line[:2]
 			fileName := first(line[3:])
 			if status == "!!" {
 				status = "I"
