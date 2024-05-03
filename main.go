@@ -289,8 +289,12 @@ func isGithub() string {
 		log.Fatalf("Failed to get git status: %v", err)
 	}
 
-	re := regexp.MustCompile(`https://github.com/[\w-_]+/[\w-_]+`)
-	return string(re.Find(out))
+	githubRe := regexp.MustCompile(`github.com[:/]([\w-_]+)/([\w-_]+)`)
+	matches := githubRe.FindStringSubmatch(string(out))
+	if len(matches) == 3 {
+		return fmt.Sprintf("https://github.com/%s/%s", matches[1], matches[2])
+	}
+	return ""
 }
 
 func gitCurrentBranch() string {
