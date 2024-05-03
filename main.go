@@ -96,22 +96,20 @@ func link(url string, name string) string {
 	return fmt.Sprintf("\x1b]8;;%s\x1b\\%s\x1b]8;;\x1b\\", url, name)
 }
 
-func linkify(s string, github string) string {
-	issue_re := regexp.MustCompile(`#(\d+)`)
-
-	// Function to replace matches with OSC8 hyperlinks
-	replaceFunc := func(match string) string {
-		issueNumber, _ := strconv.Atoi(match[1:])
-		// I'm not sure how to link to _either_ a PR or an issue. Is there a
-		// URL that I can use that will automatically go to the appropriate
-		// place?
-		return link(fmt.Sprintf("%s/pull/%d", github, issueNumber), match)
+func linkify(s string, github string, hash string) string {
+	ix := 0
+	issueRe := regexp.MustCompile(`#(\d+)`)
+	issueIx := issueRe.FindStringIndex(s)
+	out := make([]string, 0, 16)
+	for issueIx != nil {
+		out = append(out, link(fmt.Sprintf("%s/commit/%s", github, hash), s[ix:issueIx[0]]))
+		out = append(out, link(fmt.Sprintf("%s/pull/%s", github, s[issueIx[0]+1:issueIx[1]]), s[issueIx[0]:issueIx[1]]))
+		ix = issueIx[1]
+		issueIx = issueRe.FindStringIndex(s[ix:])
 	}
+	out = append(out, link(fmt.Sprintf("%s/commit/%s", github, hash), s[ix:]))
 
-	// Replace all matches with OSC8 hyperlinks
-	output := issue_re.ReplaceAllStringFunc(s, replaceFunc)
-
-	return output
+	return strings.Join(out, "")
 }
 
 const ansiMarker = '\x1b'
@@ -275,7 +273,7 @@ func show(out io.Writer, maxWidth int, files []*File, githubUrl string) {
 		}
 		messageWidth := min(len(file.message), maxWidth-1-lineWidth)
 		if len(githubUrl) > 0 {
-			fmt.Fprintf(out, " %s\n", linkify(file.message[:messageWidth], githubUrl))
+			fmt.Fprintf(out, " %s\n", linkify(file.message[:messageWidth], githubUrl, file.hash))
 		} else {
 			fmt.Fprintf(out, " %s\n", file.message[:messageWidth])
 		}
