@@ -19,6 +19,8 @@ builds:
     goos:
       - linux
       - darwin
+      # windows support ticket: https://github.com/llimllib/git-ls/issues/14
+      # - windows
 
 archives:
   - format: tar.gz
