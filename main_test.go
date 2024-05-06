@@ -69,6 +69,7 @@ func TestFileStatus(t *testing.T) {
 		name     string
 		status   string
 		files    []*File
+		dir      string
 		expected []string
 	}{
 		{
@@ -76,6 +77,7 @@ func TestFileStatus(t *testing.T) {
 			status:   "",
 			files:    []*File{},
 			expected: []string{},
+			dir:      "",
 		},
 		{
 			name:   "single file with modified status",
@@ -84,6 +86,7 @@ func TestFileStatus(t *testing.T) {
 				{entry: &mockDirEntry{name: "file.go"}},
 			},
 			expected: []string{" M"},
+			dir:      "",
 		},
 		{
 			name:   "multiple files with different statuses",
@@ -94,6 +97,7 @@ func TestFileStatus(t *testing.T) {
 				{entry: &mockDirEntry{name: "ignored.go"}},
 			},
 			expected: []string{"M ", "A ", "I"},
+			dir:      "",
 		},
 		{
 			name:   ".git directory status",
@@ -103,15 +107,25 @@ func TestFileStatus(t *testing.T) {
 				{entry: &mockDirEntry{name: ".git"}},
 			},
 			expected: []string{"M ", "*"},
+			dir:      "",
+		},
+		{
+			name:   "subdirectory",
+			status: "M  homedir/file2.go",
+			files: []*File{
+				{entry: &mockDirEntry{name: "file2.go"}},
+			},
+			dir:      "homedir/",
+			expected: []string{"M "},
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			fileStatus([]byte(tt.status), tt.files)
+			fileStatus([]byte(tt.status), tt.files, tt.dir)
 			for i, f := range tt.files {
 				if f.status != tt.expected[i] {
-					t.Errorf("expected %s for %s", tt.expected[i], f.entry.Name())
+					t.Errorf("expected %s for %s, got %s", tt.expected[i], f.entry.Name(), f.status)
 				}
 			}
 		})
