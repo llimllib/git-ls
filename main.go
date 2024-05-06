@@ -15,7 +15,7 @@ import (
 	"unsafe"
 )
 
-const VERSION = "2.0.0"
+const VERSION = "3.0.0"
 
 type Diff struct {
 	plus  int
@@ -83,7 +83,9 @@ func main() {
 		})
 	}
 
-	fileStatus(gitStatus(), files)
+	root := gitRoot()
+	curdir := must(filepath.Rel(root, must(filepath.Abs("."))))
+	fileStatus(gitStatus(), files, curdir)
 	parseGitLog(files, gitLog)
 	parseDiffStat(gitDiffStat(), files)
 
@@ -320,6 +322,16 @@ func gitCurrentBranch() string {
 	return strings.TrimSpace(string(out))
 }
 
+// gitRoot returns the root directory of the git repository
+func gitRoot() string {
+	cmd := exec.Command("git", "rev-parse", "--show-toplevel")
+	out, err := cmd.Output()
+	if err != nil {
+		log.Fatalf("Failed to get git status: %v", err)
+	}
+	return strings.TrimSpace(string(out))
+}
+
 // gitStatus accepts a dir and a slice of files, and adds the git status to
 // each file in place
 func gitStatus() []byte {
@@ -331,14 +343,19 @@ func gitStatus() []byte {
 	return out
 }
 
-func fileStatus(status []byte, files []*File) {
+func fileStatus(status []byte, files []*File, curdir string) {
 	gitStatusMap := make(map[string][]string)
 	lines := strings.Split(string(status), "\n")
 
 	for _, line := range lines {
 		if len(line) >= 3 {
 			status := line[:2]
-			fileName := first(line[3:])
+			// TODO: reject filenames that aren't in the current directory. Can
+			// we just ignore ".." entries? Right now, if you're in /subdir,
+			// and there's changes in /otherdir/whatever , this will create
+			// gitStatusMap entries of "..", which doesn't seem to mess stuff
+			// up but isn't ideal either
+			fileName := first(must(filepath.Rel(curdir, line[3:])))
 			if status == "!!" {
 				status = "I"
 			}
