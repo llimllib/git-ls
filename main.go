@@ -15,7 +15,7 @@ import (
 	"unsafe"
 )
 
-const VERSION = "3.0.0"
+const VERSION = "3.1.0"
 
 type Diff struct {
 	plus  int
@@ -365,6 +365,7 @@ func fileStatus(status []byte, files []*File, curdir string) {
 
 	for _, file := range files {
 		if fileStatus, ok := gitStatusMap[file.entry.Name()]; ok {
+			slices.Sort(fileStatus)
 			file.status = strings.Join(slices.Compact(fileStatus), ",")
 		}
 		if file.entry.Name() == ".git" {
