@@ -15,7 +15,7 @@ import (
 	"unsafe"
 )
 
-const VERSION = "3.1.0"
+const VERSION = "3.2.0"
 
 type Diff struct {
 	plus  int
@@ -51,15 +51,65 @@ func must[T any](a T, e error) T {
 	return a
 }
 
+func usage() {
+	fmt.Printf(`GIT-LS(1)
+
+NAME
+    git-ls - show the current directory annotated with links and git info
+
+SYNOPSIS
+    git ls [<dir>]
+
+DESCRIPTION
+    Displays the files in the current directory, their current git status, a short diffstat, their last modified date, the author and a portion of the last commit message for that file.
+
+    All files are hyperlinked with OSC8 hyperlinks, so you should be able to open them by clicking on them in a properly-configured terminal. The author names are hyperlinked to github if the repository has a github remote, as are commit messages.
+
+OPTIONS
+    --version
+        Print the version number and exit
+
+    --help
+        Print this message and exit
+
+    --diffWidth=n
+        Print the diffStat graph with the given width. Default is 4
+
+%s
+`, link("https://github.com/llimllib/git-ls", "https://github.com/llimllib/git-ls"))
+}
+
 func main() {
-	if len(os.Args) > 1 && os.Args[1] == "--version" {
-		fmt.Printf("%s\n", VERSION)
-		os.Exit(0)
+	argv := os.Args[1:]
+	diffWidth := 4
+	for len(argv) > 0 {
+		if argv[0] == "--version" {
+			fmt.Printf("%s\n", VERSION)
+			os.Exit(0)
+		}
+		if argv[0] == "--help" || argv[0] == "-h" {
+			usage()
+			os.Exit(0)
+		}
+		if strings.HasPrefix(argv[0], "--diffWidth") {
+			if len(argv) == 1 {
+				if strings.Contains(argv[0], "=") {
+					parts := strings.SplitN(argv[0], "=", 2)
+					diffWidth = must(strconv.Atoi(parts[1]))
+				} else {
+					log.Fatalf("--diffWidth requires an argument")
+				}
+				argv = argv[1:]
+			} else {
+				diffWidth = must(strconv.Atoi(argv[1]))
+				argv = argv[2:]
+			}
+		}
 	}
 
 	var dir string
-	if len(os.Args) > 1 {
-		dir = os.Args[1]
+	if len(argv) > 1 {
+		dir = argv[1]
 
 		if err := os.Chdir(dir); err != nil {
 			log.Fatalf("Failed to change directory to %s: %v", dir, err)
@@ -93,7 +143,7 @@ func main() {
 	for _, file := range files {
 		// eventually I'd probably like to make width a flag. For now,
 		// width == 4
-		file.diffStat = makeDiffGraph(file, 4)
+		file.diffStat = makeDiffGraph(file, diffWidth)
 	}
 
 	maxWidth := columns(os.Stdout.Fd())
