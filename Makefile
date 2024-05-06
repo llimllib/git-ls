@@ -14,4 +14,4 @@ lint:
 
 .PHONY: publish
 publish:
-	bin/release.sh
+	make lint && go test && bin/release.sh
