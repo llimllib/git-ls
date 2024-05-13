@@ -46,7 +46,7 @@ const (
 
 func must[T any](a T, e error) T {
 	if e != nil {
-		log.Fatalf("%v", e)
+		panic(e)
 	}
 	return a
 }
