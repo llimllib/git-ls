@@ -1,11 +1,13 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"io"
 	"log"
 	"os"
 	"os/exec"
+	"path"
 	"path/filepath"
 	"regexp"
 	"slices"
@@ -24,6 +26,7 @@ type Diff struct {
 
 type File struct {
 	entry        os.DirEntry
+	gitRel       string
 	status       string
 	diffSum      *Diff
 	diffStat     string
@@ -43,6 +46,12 @@ const (
 	RESET  = "\x1b[0m"
 	YELLOW = "\x1b[33m"
 )
+
+func hasTo(e error) {
+	if e != nil {
+		log.Fatalf("%v", e)
+	}
+}
 
 func must[T any](a T, e error) T {
 	if e != nil {
@@ -123,21 +132,26 @@ func main() {
 		log.Fatalf("Failed to read directory %s: %v", dir, err)
 	}
 
+	root := gitRoot()
+
 	var files []*File
 	for _, file := range osfiles {
 		stat, _ := os.Stat(file.Name())
 		files = append(files, &File{
-			entry: file,
-			isDir: file.IsDir(),
-			isExe: !file.IsDir() && stat.Mode()&0111 != 0,
+			entry:  file,
+			gitRel: must(filepath.Rel(root, must(filepath.Abs(file.Name())))),
+			isDir:  file.IsDir(),
+			isExe:  !file.IsDir() && stat.Mode()&0111 != 0,
 		})
 	}
 
-	root := gitRoot()
+	indexFile := path.Join(root, ".git", "git-ls-cache.json")
+	index := readIndex(indexFile)
 	curdir := must(filepath.Rel(root, must(filepath.Abs("."))))
 	fileStatus(gitStatus(), files, curdir)
-	parseGitLog(files, gitLog)
+	parseGitLog(index, files, gitLog)
 	parseDiffStat(gitDiffStat(), files)
+	writeIndex(index, indexFile)
 
 	// generate a diffStat graph for every file
 	for _, file := range files {
@@ -213,6 +227,36 @@ func columns(fd uintptr) int {
 	_, _, _ = syscall.Syscall(syscall.SYS_IOCTL,
 		fd, uintptr(syscall.TIOCGWINSZ), uintptr(unsafe.Pointer(&sz)))
 	return int(sz.cols)
+}
+
+type FileCache struct {
+	Revision     string
+	Hash         string
+	LastModified string
+	Author       string
+	AuthorEmail  string
+	Message      string
+}
+
+// file name -> current cache item
+type FileIndex struct {
+	Cache   map[string]FileCache
+	Version int
+}
+
+func readIndex(indexFile string) FileIndex {
+	index := FileIndex{
+		Cache:   make(map[string]FileCache),
+		Version: 1,
+	}
+	if _, err := os.Stat(indexFile); err == nil {
+		hasTo(json.Unmarshal(must(os.ReadFile(indexFile)), &index))
+	}
+	return index
+}
+
+func writeIndex(index FileIndex, indexFile string) {
+	os.WriteFile(indexFile, must(json.Marshal(index)), os.ModePerm)
 }
 
 // Pulled straight from git:
@@ -373,25 +417,17 @@ func gitCurrentBranch() string {
 // gitRoot returns the root directory of the git repository
 func gitRoot() string {
 	cmd := exec.Command("git", "rev-parse", "--show-toplevel")
-	out, err := cmd.Output()
-	if err != nil {
-		log.Fatalf("Failed to get git status: %v", err)
-	}
-	return strings.TrimSpace(string(out))
+	return strings.TrimSpace(string(must(cmd.Output())))
 }
 
 // gitStatus accepts a dir and a slice of files, and adds the git status to
 // each file in place
-func gitStatus() []byte {
+func gitStatus() string {
 	cmd := exec.Command("git", "status", "--porcelain", "--ignored")
-	out, err := cmd.Output()
-	if err != nil {
-		log.Fatalf("Failed to get git status: %v", err)
-	}
-	return out
+	return string(must(cmd.Output()))
 }
 
-func fileStatus(status []byte, files []*File, curdir string) {
+func fileStatus(status string, files []*File, curdir string) {
 	gitStatusMap := make(map[string][]string)
 	lines := strings.Split(string(status), "\n")
 
@@ -422,25 +458,53 @@ func fileStatus(status []byte, files []*File, curdir string) {
 	}
 }
 
-func gitLog(file *File) []byte {
-	cmd := exec.Command("git", "log", "-1", "--date=format:%Y-%m-%d",
-		"--pretty=format:%h%x00%ad%x00%aN%x00%aE%x00%s", "--", file.entry.Name())
-	out, err := cmd.Output()
-	if err != nil {
-		log.Fatalf("Failed to get git info for file %s: %v", file.entry.Name(), err)
-	}
-	return out
+func gitRev() string {
+	cmd := exec.Command("git", "rev-parse", "HEAD")
+	return string(must(cmd.Output()))
 }
 
-func parseGitLog(files []*File, gitLog func(file *File) []byte) {
+// gitLog returns all logs for the given file
+func gitLog(file *File, fromRevision string) string {
+	var cmd *exec.Cmd
+	if fromRevision == "" {
+		cmd = exec.Command("git", "log", "-1", "--date=format:%Y-%m-%d",
+			"--pretty=format:%h%x00%ad%x00%aN%x00%aE%x00%s", "--", file.entry.Name())
+	} else {
+		cmd = exec.Command("git", "log", "-1", "--date=format:%Y-%m-%d",
+			"--pretty=format:%h%x00%ad%x00%aN%x00%aE%x00%s",
+			fmt.Sprintf("%s..HEAD", fromRevision),
+			"--", file.entry.Name())
+	}
+	return string(must(cmd.Output()))
+}
+
+func parseGitLog(index FileIndex, files []*File, gitLog func(file *File, fromRevision string) string) {
+	rev := gitRev()
 	for _, file := range files {
-		out := gitLog(file)
+		var out string
+
+		// If the index is up to date
+		if cacheEntry, ok := index.Cache[file.gitRel]; ok {
+			if cacheEntry.Revision == rev {
+				file.hash = cacheEntry.Hash
+				file.lastModified = cacheEntry.LastModified
+				file.author = cacheEntry.Author
+				file.authorEmail = cacheEntry.AuthorEmail
+				file.message = cacheEntry.Message
+				continue
+			} else {
+				out = gitLog(file, cacheEntry.Revision)
+			}
+		} else {
+			out = gitLog(file, "")
+		}
 
 		if len(out) == 0 {
+			index.Cache[file.gitRel] = FileCache{Revision: rev}
 			continue
 		}
 
-		parts := strings.SplitN(string(out), "\x00", 5)
+		parts := strings.SplitN(out, "\x00", 5)
 		if len(parts) != 5 {
 			log.Fatalf("unexpected output format: %#v", out)
 		}
@@ -450,6 +514,15 @@ func parseGitLog(files []*File, gitLog func(file *File) []byte) {
 		file.author = parts[2]
 		file.authorEmail = parts[3]
 		file.message = parts[4]
+
+		index.Cache[file.gitRel] = FileCache{
+			Revision:     rev,
+			Hash:         file.hash,
+			LastModified: file.lastModified,
+			Author:       file.author,
+			AuthorEmail:  file.authorEmail,
+			Message:      file.message,
+		}
 	}
 }
 

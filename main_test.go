@@ -132,29 +132,31 @@ func TestFileStatus(t *testing.T) {
 	}
 }
 
-func mockGitLog(file *File) []byte {
+func mockGitLog(file *File, fromRevision string) string {
 	switch file.entry.Name() {
 	case "file1.go":
-		return []byte("hash1\x002023-03-01\x00John Doe\x00john@example.com\x00Initial commit")
+		return "hash1\x002023-03-01\x00John Doe\x00john@example.com\x00Initial commit"
 	case "file2.go":
-		return []byte("hash2\x002023-03-02\x00Jane Smith\x00jane@example.com\x00Add new feature")
+		return "hash2\x002023-03-02\x00Jane Smith\x00jane@example.com\x00Add new feature"
 	case "file3.go":
-		return []byte("hash3\x002023-03-03\x00Bob Johnson\x00bob@example.com\x00Fix a bug parsing '|' pipes")
+		return "hash3\x002023-03-03\x00Bob Johnson\x00bob@example.com\x00Fix a bug parsing '|' pipes"
 	case "file4.go":
-		return []byte("invalid output format")
+		return "invalid output format"
 	default:
-		return nil
+		return ""
 	}
 }
 
 func TestParseGitLog(t *testing.T) {
 	testCases := []struct {
+		index    FileIndex
 		name     string
 		files    []*File
 		expected [][]string
 	}{
 		{
-			name: "Valid git log output",
+			index: make(map[string]FileCache),
+			name:  "Valid git log output",
 			files: []*File{
 				{entry: &mockDirEntry{name: "file1.go"}},
 				{entry: &mockDirEntry{name: "file2.go"}},
@@ -178,7 +180,7 @@ func TestParseGitLog(t *testing.T) {
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
-			parseGitLog(tc.files, mockGitLog)
+			parseGitLog(tc.index, tc.files, mockGitLog)
 
 			for i, file := range tc.files {
 				expected := tc.expected[i]
