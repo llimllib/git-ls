@@ -141,8 +141,6 @@ func main() {
 
 	// generate a diffStat graph for every file
 	for _, file := range files {
-		// eventually I'd probably like to make width a flag. For now,
-		// width == 4
 		file.diffStat = makeDiffGraph(file, diffWidth)
 	}
 
