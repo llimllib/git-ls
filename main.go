@@ -11,6 +11,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 	"unsafe"
 )
@@ -49,6 +50,51 @@ func must[T any](a T, e error) T {
 		panic(e)
 	}
 	return a
+}
+
+// gitResults holds the output of all git commands that can be run in parallel
+type gitResults struct {
+	root          string
+	status        []byte
+	diffStat      []byte
+	currentBranch string
+	remotes       []byte
+}
+
+// fetchGitData runs all independent git commands in parallel and returns the results
+func fetchGitData() *gitResults {
+	results := &gitResults{}
+	var wg sync.WaitGroup
+
+	wg.Add(5)
+
+	go func() {
+		defer wg.Done()
+		results.root = gitRoot()
+	}()
+
+	go func() {
+		defer wg.Done()
+		results.status = gitStatus()
+	}()
+
+	go func() {
+		defer wg.Done()
+		results.diffStat = gitDiffStat()
+	}()
+
+	go func() {
+		defer wg.Done()
+		results.currentBranch = gitCurrentBranch()
+	}()
+
+	go func() {
+		defer wg.Done()
+		results.remotes = gitRemotes()
+	}()
+
+	wg.Wait()
+	return results
 }
 
 func usage() {
@@ -133,11 +179,13 @@ func main() {
 		})
 	}
 
-	root := gitRoot()
-	curdir := must(filepath.Rel(root, must(filepath.Abs("."))))
-	fileStatus(gitStatus(), files, curdir)
+	// Fetch all git data in parallel
+	gitData := fetchGitData()
+
+	curdir := must(filepath.Rel(gitData.root, must(filepath.Abs("."))))
+	fileStatus(gitData.status, files, curdir)
 	parseGitLogParallel(files)
-	parseDiffStat(gitDiffStat(), files)
+	parseDiffStat(gitData.diffStat, files)
 
 	// generate a diffStat graph for every file
 	for _, file := range files {
@@ -145,8 +193,8 @@ func main() {
 	}
 
 	maxWidth := columns(os.Stdout.Fd())
-	fmt.Printf("On branch %s%s%s\n\n", RED, gitCurrentBranch(), RESET)
-	show(os.Stdout, maxWidth, files, isGithub(gitRemotes()), must(filepath.Abs(dir)))
+	fmt.Printf("On branch %s%s%s\n\n", RED, gitData.currentBranch, RESET)
+	show(os.Stdout, maxWidth, files, isGithub(gitData.remotes), must(filepath.Abs(dir)))
 }
 
 func link(url string, name string) string {
