@@ -129,7 +129,7 @@ func main() {
 		files = append(files, &File{
 			entry: file,
 			isDir: file.IsDir(),
-			isExe: !file.IsDir() && stat.Mode()&0111 != 0,
+			isExe: !file.IsDir() && stat.Mode()&0o111 != 0,
 		})
 	}
 
@@ -159,12 +159,12 @@ func linkify(commitMsg string, github string, hash string) string {
 	issueIx := issueRe.FindStringIndex(commitMsg)
 	out := make([]string, 0, 16)
 	for issueIx != nil {
-		commitUrl := fmt.Sprintf("%s/commit/%s", github, hash)
-		out = append(out, link(commitUrl, commitMsg[:issueIx[0]]))
+		commitURL := fmt.Sprintf("%s/commit/%s", github, hash)
+		out = append(out, link(commitURL, commitMsg[:issueIx[0]]))
 
-		issueUrl := fmt.Sprintf("%s/pull/%s", github, commitMsg[issueIx[0]+1:issueIx[1]])
+		issueURL := fmt.Sprintf("%s/pull/%s", github, commitMsg[issueIx[0]+1:issueIx[1]])
 		issueText := fmt.Sprintf("%s%s%s", BLUE, commitMsg[issueIx[0]:issueIx[1]], RESET)
-		out = append(out, link(issueUrl, issueText))
+		out = append(out, link(issueURL, issueText))
 
 		commitMsg = commitMsg[issueIx[1]:]
 		issueIx = issueRe.FindStringIndex(commitMsg)
@@ -217,7 +217,7 @@ func columns(fd uintptr) int {
 
 // Pulled straight from git:
 // https://github.com/git/git/blob/d4cc1ec3/diff.c#L2862-L2874
-func scale_linear(n int, width int, max_change int) int {
+func scaleLinear(n int, width int, maxChange int) int {
 	if n == 0 {
 		return 0
 	}
@@ -227,7 +227,7 @@ func scale_linear(n int, width int, max_change int) int {
 	 * scale linearly as if the allotted width is one column shorter
 	 * than it is, and then add 1 to the result.
 	 */
-	return 1 + (n * (width - 1) / max_change)
+	return 1 + (n * (width - 1) / maxChange)
 }
 
 // makeDiffGraph turns the total diff for a file/directory into a diff graph
@@ -248,13 +248,13 @@ func makeDiffGraph(file *File, width int) string {
 	}
 	return fmt.Sprintf("%s%s%s%s%s",
 		GREEN,
-		strings.Repeat("+", scale_linear(plus, width, plus+minus)),
+		strings.Repeat("+", scaleLinear(plus, width, plus+minus)),
 		RED,
-		strings.Repeat("-", scale_linear(minus, width, plus+minus)),
+		strings.Repeat("-", scaleLinear(minus, width, plus+minus)),
 		RESET)
 }
 
-func show(out io.Writer, maxWidth int, files []*File, githubUrl string, dir string) {
+func show(out io.Writer, maxWidth int, files []*File, githubURL string, dir string) {
 	maxStatus := 0
 	maxDiffStat := 0
 	maxNameLen := 0
@@ -276,37 +276,37 @@ func show(out io.Writer, maxWidth int, files []*File, githubUrl string, dir stri
 
 		// print the file's git status. If there are no modified files, skip entirely
 		if maxStatus > 0 {
-			fmt.Fprintf(out, fmt.Sprintf("%%%ds ", maxStatus), file.status)
+			must(fmt.Fprintf(out, fmt.Sprintf("%%%ds ", maxStatus), file.status))
 			lineWidth += maxStatus + 1
 
 			// print the diffstat summary for the file
-			fmt.Fprintf(out, "%s", file.diffStat)
+			must(fmt.Fprintf(out, "%s", file.diffStat))
 			for i := 0; i < maxDiffStat-width(file.diffStat)+1; i++ {
-				fmt.Fprintf(out, " ")
+				must(fmt.Fprintf(out, " "))
 			}
 			lineWidth += 5
 		}
 
 		if file.isDir {
-			fmt.Fprintf(out, "%s", BLUE)
+			must(fmt.Fprintf(out, "%s", BLUE))
 		}
 		if file.isExe {
-			fmt.Fprintf(out, "%s", GREEN)
+			must(fmt.Fprintf(out, "%s", GREEN))
 		}
 		// link the file name to the file's location
-		fileUrl := fmt.Sprintf("file://%s%s", must(os.Hostname()), filepath.Join(dir, file.entry.Name()))
-		fmt.Fprintf(out, "%s", link(fileUrl, file.entry.Name()))
+		fileURL := fmt.Sprintf("file://%s%s", must(os.Hostname()), filepath.Join(dir, file.entry.Name()))
+		must(fmt.Fprintf(out, "%s", link(fileURL, file.entry.Name())))
 		// pad spaces to the right up to maxNameLen
 		for i := 0; i < maxNameLen-len(file.entry.Name()); i++ {
-			fmt.Fprintf(out, " ")
+			must(fmt.Fprintf(out, " "))
 		}
 		if file.isDir || file.isExe {
-			fmt.Fprintf(out, "%s", RESET)
+			must(fmt.Fprintf(out, "%s", RESET))
 		}
 		lineWidth += maxNameLen
 
 		// write the last modified date
-		fmt.Fprintf(out, " %s", file.lastModified)
+		must(fmt.Fprintf(out, " %s", file.lastModified))
 		lineWidth += len(file.lastModified) + 1
 
 		if lineWidth >= maxWidth {
@@ -315,15 +315,15 @@ func show(out io.Writer, maxWidth int, files []*File, githubUrl string, dir stri
 		}
 		authorWidth := min(len(file.author), maxWidth-1-lineWidth)
 		lineWidth += authorWidth + 1
-		if len(githubUrl) > 0 {
+		if len(githubURL) > 0 {
 			// if this is a github repo, link the author name to their commits
 			// page on github. It would be cool to hyperlink the author to
 			// a git command, but I'm not sure how to give a URL for the command
 			// `git log --author=Janet`
-			authorLink := fmt.Sprintf("%s/commits?author=%s", githubUrl, file.authorEmail)
-			fmt.Fprintf(out, " %s%s%s", YELLOW, link(authorLink, file.author[:authorWidth]), RESET)
+			authorLink := fmt.Sprintf("%s/commits?author=%s", githubURL, file.authorEmail)
+			must(fmt.Fprintf(out, " %s%s%s", YELLOW, link(authorLink, file.author[:authorWidth]), RESET))
 		} else {
-			fmt.Fprintf(out, " %s%s%s", YELLOW, file.author[:authorWidth], RESET)
+			must(fmt.Fprintf(out, " %s%s%s", YELLOW, file.author[:authorWidth], RESET))
 		}
 
 		// If this is a github repo, look for #<issue> links and linkify them.
@@ -335,10 +335,10 @@ func show(out io.Writer, maxWidth int, files []*File, githubUrl string, dir stri
 			continue
 		}
 		messageWidth := min(len(file.message), maxWidth-1-lineWidth)
-		if len(githubUrl) > 0 {
-			fmt.Fprintf(out, " %s\n", linkify(file.message[:messageWidth], githubUrl, file.hash))
+		if len(githubURL) > 0 {
+			must(fmt.Fprintf(out, " %s\n", linkify(file.message[:messageWidth], githubURL, file.hash)))
 		} else {
-			fmt.Fprintf(out, " %s\n", file.message[:messageWidth])
+			must(fmt.Fprintf(out, " %s\n", file.message[:messageWidth]))
 		}
 	}
 }
@@ -393,9 +393,7 @@ func gitStatus() []byte {
 
 func fileStatus(status []byte, files []*File, curdir string) {
 	gitStatusMap := make(map[string][]string)
-	lines := strings.Split(string(status), "\n")
-
-	for _, line := range lines {
+	for line := range strings.SplitSeq(string(status), "\n") {
 		if len(line) >= 3 {
 			status := line[:2]
 			// TODO: reject filenames that aren't in the current directory. Can
@@ -486,8 +484,7 @@ func gitDiffStat() []byte {
 
 func parseDiffStat(diffStat []byte, files []*File) {
 	diffStats := make(map[string][]Diff)
-	lines := strings.Split(strings.TrimSpace(string(diffStat)), "\n")
-	for _, line := range lines {
+	for line := range strings.SplitSeq(strings.TrimSpace(string(diffStat)), "\n") {
 		parts := strings.Split(line, "\t")
 		if len(parts) < 3 {
 			continue
