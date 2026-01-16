@@ -136,7 +136,7 @@ func main() {
 	root := gitRoot()
 	curdir := must(filepath.Rel(root, must(filepath.Abs("."))))
 	fileStatus(gitStatus(), files, curdir)
-	parseGitLog(files, gitLog)
+	parseGitLogParallel(files)
 	parseDiffStat(gitDiffStat(), files)
 
 	// generate a diffStat graph for every file
@@ -420,34 +420,46 @@ func fileStatus(status []byte, files []*File, curdir string) {
 	}
 }
 
-func gitLog(file *File) []byte {
-	cmd := exec.Command("git", "log", "-1", "--date=format:%Y-%m-%d",
-		"--pretty=format:%h%x00%ad%x00%aN%x00%aE%x00%s", "--", file.entry.Name())
-	out, err := cmd.Output()
-	if err != nil {
-		log.Fatalf("Failed to get git info for file %s: %v", file.entry.Name(), err)
-	}
-	return out
+// gitLogResult holds the result of a git log call for a single file
+type gitLogResult struct {
+	file   *File
+	output []byte
 }
 
-func parseGitLog(files []*File, gitLog func(file *File) []byte) {
-	for _, file := range files {
-		out := gitLog(file)
+// parseGitLogParallel runs git log -1 for each file in parallel and parses
+// the results. This is faster than sequential calls due to parallelism, and
+// faster than a single `git log -- .` because -1 limits to finding just one
+// commit per file rather than traversing entire history.
+func parseGitLogParallel(files []*File) {
+	results := make(chan gitLogResult, len(files))
 
-		if len(out) == 0 {
+	// Launch all git log commands in parallel
+	for _, file := range files {
+		go func(f *File) {
+			cmd := exec.Command("git", "log", "-1", "--date=format:%Y-%m-%d",
+				"--pretty=format:%h%x00%ad%x00%aN%x00%aE%x00%s", "--", f.entry.Name())
+			out, _ := cmd.Output()
+			results <- gitLogResult{file: f, output: out}
+		}(file)
+	}
+
+	// Collect results
+	for range len(files) {
+		result := <-results
+		if len(result.output) == 0 {
 			continue
 		}
 
-		parts := strings.SplitN(string(out), "\x00", 5)
+		parts := strings.SplitN(string(result.output), "\x00", 5)
 		if len(parts) != 5 {
-			log.Fatalf("unexpected output format: %#v", out)
+			continue
 		}
 
-		file.hash = parts[0]
-		file.lastModified = parts[1]
-		file.author = parts[2]
-		file.authorEmail = parts[3]
-		file.message = parts[4]
+		result.file.hash = parts[0]
+		result.file.lastModified = parts[1]
+		result.file.author = parts[2]
+		result.file.authorEmail = parts[3]
+		result.file.message = parts[4]
 	}
 }
 
