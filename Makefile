@@ -1,4 +1,6 @@
 SRC := $(shell git ls-files '*.go')
+TRANSCRIPTS := $(wildcard transcripts/*)
+STATIC := $(wildcard static/*)
 
 .PHONY: all
 all: git-ls
@@ -15,3 +17,11 @@ lint:
 .PHONY: publish
 publish:
 	make lint && go test && bin/release.sh
+
+_site/index.html: README.md $(TRANSCRIPTS) $(STATIC)
+	@./tools/build-site.sh
+
+.PHONY: serve-site
+serve-site: _site/index.html
+	devd -ol ./_site/
+
