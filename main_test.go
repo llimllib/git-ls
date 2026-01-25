@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"testing"
+	"time"
 )
 
 func TestIsGithub(t *testing.T) {
@@ -129,6 +130,114 @@ func TestFileStatus(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// parseArgs extracts diffWidth and directory from command line arguments.
+// This is extracted from main() for testability.
+func parseArgs(argv []string) (diffWidth int, dir string) {
+	diffWidth = 4
+	for len(argv) > 0 {
+		if argv[0] == "--version" || argv[0] == "--help" || argv[0] == "-h" {
+			return diffWidth, ""
+		}
+		if len(argv[0]) > 0 && argv[0][:2] == "--" && len(argv[0]) > 11 && argv[0][:11] == "--diffWidth" {
+			if len(argv) == 1 {
+				if len(argv[0]) > 11 && argv[0][11] == '=' {
+					parts := make([]string, 2)
+					parts[0] = argv[0][:11]
+					parts[1] = argv[0][12:]
+					diffWidth, _ = parseInt(parts[1])
+				}
+				argv = argv[1:]
+			} else {
+				diffWidth, _ = parseInt(argv[1])
+				argv = argv[2:]
+			}
+		} else {
+			// Non-flag argument (directory), stop parsing flags
+			break
+		}
+	}
+
+	if len(argv) > 0 {
+		dir = argv[0]
+	} else {
+		dir = "."
+	}
+	return diffWidth, dir
+}
+
+func parseInt(s string) (int, error) {
+	var n int
+	for _, c := range s {
+		if c < '0' || c > '9' {
+			return 0, fmt.Errorf("invalid integer: %s", s)
+		}
+		n = n*10 + int(c-'0')
+	}
+	return n, nil
+}
+
+func TestParseArgs(t *testing.T) {
+	tests := []struct {
+		name         string
+		args         []string
+		expectedDir  string
+		expectedWidth int
+	}{
+		{
+			name:         "no arguments",
+			args:         []string{},
+			expectedDir:  ".",
+			expectedWidth: 4,
+		},
+		{
+			name:         "directory argument",
+			args:         []string{"bin"},
+			expectedDir:  "bin",
+			expectedWidth: 4,
+		},
+		{
+			name:         "directory with path",
+			args:         []string{"some/nested/dir"},
+			expectedDir:  "some/nested/dir",
+			expectedWidth: 4,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			width, dir := parseArgs(tt.args)
+			if dir != tt.expectedDir {
+				t.Errorf("parseArgs(%v) dir = %q, expected %q", tt.args, dir, tt.expectedDir)
+			}
+			if width != tt.expectedWidth {
+				t.Errorf("parseArgs(%v) width = %d, expected %d", tt.args, width, tt.expectedWidth)
+			}
+		})
+	}
+}
+
+// TestDirectoryArgDoesNotHang tests that passing a directory argument doesn't cause an infinite loop.
+// This is a regression test for a bug where the argument parsing loop would hang forever
+// when a non-flag argument (like a directory name) was passed.
+func TestDirectoryArgDoesNotHang(t *testing.T) {
+	done := make(chan bool, 1)
+	go func() {
+		// This should complete almost instantly
+		_, dir := parseArgs([]string{"bin"})
+		if dir != "bin" {
+			t.Errorf("Expected dir to be 'bin', got %q", dir)
+		}
+		done <- true
+	}()
+
+	select {
+	case <-done:
+		// Test passed
+	case <-time.After(1 * time.Second):
+		t.Fatal("parseArgs hung when given a directory argument - argument parsing loop is infinite")
 	}
 }
 

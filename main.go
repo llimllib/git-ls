@@ -150,12 +150,15 @@ func main() {
 				diffWidth = must(strconv.Atoi(argv[1]))
 				argv = argv[2:]
 			}
+		} else {
+			// Non-flag argument (directory), stop parsing flags
+			break
 		}
 	}
 
 	var dir string
-	if len(argv) > 1 {
-		dir = argv[1]
+	if len(argv) > 0 {
+		dir = argv[0]
 
 		if err := os.Chdir(dir); err != nil {
 			log.Fatalf("Failed to change directory to %s: %v", dir, err)
@@ -164,7 +167,7 @@ func main() {
 		dir = "."
 	}
 
-	osfiles, err := os.ReadDir(dir)
+	osfiles, err := os.ReadDir(".")
 	if err != nil {
 		log.Fatalf("Failed to read directory %s: %v", dir, err)
 	}
