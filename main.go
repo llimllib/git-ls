@@ -16,7 +16,7 @@ import (
 	"unsafe"
 )
 
-const VERSION = "3.4.0"
+const VERSION = "3.5.0"
 
 type Diff struct {
 	plus  int
