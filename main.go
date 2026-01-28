@@ -16,7 +16,7 @@ import (
 	"unsafe"
 )
 
-const VERSION = "3.5.0"
+const VERSION = "3.6.0"
 
 type Diff struct {
 	plus  int
@@ -25,6 +25,7 @@ type Diff struct {
 
 type File struct {
 	entry        os.DirEntry
+	name         string // used for deleted files that don't have a DirEntry
 	status       string
 	diffSum      *Diff
 	diffStat     string
@@ -35,14 +36,24 @@ type File struct {
 	message      string
 	isDir        bool
 	isExe        bool
+	isDeleted    bool
+}
+
+// Name returns the file name, either from the DirEntry or the name field
+func (f *File) Name() string {
+	if f.entry != nil {
+		return f.entry.Name()
+	}
+	return f.name
 }
 
 const (
-	BLUE   = "\x1b[34m"
-	GREEN  = "\x1b[32m"
-	RED    = "\x1b[31m"
-	RESET  = "\x1b[0m"
-	YELLOW = "\x1b[33m"
+	BLUE      = "\x1b[34m"
+	GREEN     = "\x1b[32m"
+	RED       = "\x1b[31m"
+	RESET     = "\x1b[0m"
+	YELLOW    = "\x1b[33m"
+	STRIKEOUT = "\x1b[9m"
 )
 
 func must[T any](a T, e error) T {
@@ -195,7 +206,18 @@ func main() {
 		file.diffStat = makeDiffGraph(file, diffWidth)
 	}
 
+	// Parse deleted files from git status and merge into file list
+	deletedFiles := parseDeletedFiles(gitData.status, curdir)
+	parseGitLogParallel(deletedFiles)
+	files = append(files, deletedFiles...)
+	slices.SortFunc(files, func(a, b *File) int {
+		return strings.Compare(strings.ToLower(a.Name()), strings.ToLower(b.Name()))
+	})
+
 	maxWidth := columns(os.Stdout.Fd())
+	if maxWidth == 0 {
+		maxWidth = 80 // default when not a TTY
+	}
 	fmt.Printf("On branch %s%s%s\n\n", RED, gitData.currentBranch, RESET)
 	show(os.Stdout, maxWidth, files, isGithub(gitData.remotes), must(filepath.Abs(dir)))
 }
@@ -316,8 +338,8 @@ func show(out io.Writer, maxWidth int, files []*File, githubURL string, dir stri
 		if width(file.diffStat) > maxDiffStat {
 			maxDiffStat = width(file.diffStat)
 		}
-		if len(file.entry.Name()) > maxNameLen {
-			maxNameLen = len(file.entry.Name())
+		if len(file.Name()) > maxNameLen {
+			maxNameLen = len(file.Name())
 		}
 	}
 
@@ -338,19 +360,25 @@ func show(out io.Writer, maxWidth int, files []*File, githubURL string, dir stri
 			lineWidth += 5
 		}
 
-		if file.isDir {
+		if file.isDeleted {
+			must(fmt.Fprintf(out, "%s%s", RED, STRIKEOUT))
+		} else if file.isDir {
 			must(fmt.Fprintf(out, "%s", BLUE))
-		}
-		if file.isExe {
+		} else if file.isExe {
 			must(fmt.Fprintf(out, "%s", GREEN))
 		}
-		// link the file name to the file's location
-		fileURL := fmt.Sprintf("file://%s%s", must(os.Hostname()), filepath.Join(dir, file.entry.Name()))
-		must(fmt.Fprintf(out, "%s", link(fileURL, file.entry.Name())))
+		// link the file name to the file's location (but not for deleted files)
+		if file.isDeleted {
+			must(fmt.Fprintf(out, "%s", file.Name()))
+		} else {
+			fileURL := fmt.Sprintf("file://%s%s", must(os.Hostname()), filepath.Join(dir, file.Name()))
+			must(fmt.Fprintf(out, "%s", link(fileURL, file.Name())))
+		}
 		// pad spaces to the right up to maxNameLen
-		for i := 0; i < maxNameLen-len(file.entry.Name()); i++ {
+		for i := 0; i < maxNameLen-len(file.Name()); i++ {
 			must(fmt.Fprintf(out, " "))
 		}
+		// reset color for dir/exe but not deleted (strikethrough continues)
 		if file.isDir || file.isExe {
 			must(fmt.Fprintf(out, "%s", RESET))
 		}
@@ -361,6 +389,9 @@ func show(out io.Writer, maxWidth int, files []*File, githubURL string, dir stri
 		lineWidth += len(file.lastModified) + 1
 
 		if lineWidth >= maxWidth {
+			if file.isDeleted {
+				must(fmt.Fprintf(out, "%s", RESET))
+			}
 			fmt.Println("")
 			continue
 		}
@@ -372,9 +403,17 @@ func show(out io.Writer, maxWidth int, files []*File, githubURL string, dir stri
 			// a git command, but I'm not sure how to give a URL for the command
 			// `git log --author=Janet`
 			authorLink := fmt.Sprintf("%s/commits?author=%s", githubURL, file.authorEmail)
-			must(fmt.Fprintf(out, " %s%s%s", YELLOW, link(authorLink, file.author[:authorWidth]), RESET))
+			if file.isDeleted {
+				must(fmt.Fprintf(out, " %s", link(authorLink, file.author[:authorWidth])))
+			} else {
+				must(fmt.Fprintf(out, " %s%s%s", YELLOW, link(authorLink, file.author[:authorWidth]), RESET))
+			}
 		} else {
-			must(fmt.Fprintf(out, " %s%s%s", YELLOW, file.author[:authorWidth], RESET))
+			if file.isDeleted {
+				must(fmt.Fprintf(out, " %s", file.author[:authorWidth]))
+			} else {
+				must(fmt.Fprintf(out, " %s%s%s", YELLOW, file.author[:authorWidth], RESET))
+			}
 		}
 
 		// If this is a github repo, look for #<issue> links and linkify them.
@@ -382,11 +421,20 @@ func show(out io.Writer, maxWidth int, files []*File, githubURL string, dir stri
 		// be better to use the full width of the terminal if available here,
 		// or just keep it shortish?
 		if lineWidth >= maxWidth {
+			if file.isDeleted {
+				must(fmt.Fprintf(out, "%s", RESET))
+			}
 			fmt.Println("")
 			continue
 		}
 		messageWidth := min(len(file.message), maxWidth-1-lineWidth)
-		if len(githubURL) > 0 {
+		if file.isDeleted {
+			if len(githubURL) > 0 {
+				must(fmt.Fprintf(out, " %s%s\n", linkify(file.message[:messageWidth], githubURL, file.hash), RESET))
+			} else {
+				must(fmt.Fprintf(out, " %s%s\n", file.message[:messageWidth], RESET))
+			}
+		} else if len(githubURL) > 0 {
 			must(fmt.Fprintf(out, " %s\n", linkify(file.message[:messageWidth], githubURL, file.hash)))
 		} else {
 			must(fmt.Fprintf(out, " %s\n", file.message[:messageWidth]))
@@ -461,14 +509,39 @@ func fileStatus(status []byte, files []*File, curdir string) {
 	}
 
 	for _, file := range files {
-		if fileStatus, ok := gitStatusMap[file.entry.Name()]; ok {
+		if fileStatus, ok := gitStatusMap[file.Name()]; ok {
 			slices.Sort(fileStatus)
 			file.status = strings.Join(slices.Compact(fileStatus), ",")
 		}
-		if file.entry.Name() == ".git" {
+		if file.Name() == ".git" {
 			file.status = "*"
 		}
 	}
+}
+
+// parseDeletedFiles extracts deleted files from git status output and returns
+// them as File structs. Deleted files have status " D" (deleted in worktree)
+// or "D " (staged deletion).
+func parseDeletedFiles(status []byte, curdir string) []*File {
+	var deletedFiles []*File
+	for line := range strings.SplitSeq(string(status), "\n") {
+		if len(line) >= 3 {
+			statusCode := line[:2]
+			// " D" means deleted in worktree, "D " means staged deletion
+			if statusCode == " D" || statusCode == "D " {
+				fileName := first(must(filepath.Rel(curdir, line[3:])))
+				// Only include files in current directory (not ".." for parent dirs)
+				if fileName != ".." && !strings.Contains(fileName, string(os.PathSeparator)) {
+					deletedFiles = append(deletedFiles, &File{
+						name:      fileName,
+						status:    statusCode,
+						isDeleted: true,
+					})
+				}
+			}
+		}
+	}
+	return deletedFiles
 }
 
 // gitLogResult holds the result of a git log call for a single file
@@ -488,7 +561,7 @@ func parseGitLogParallel(files []*File) {
 	for _, file := range files {
 		go func(f *File) {
 			cmd := exec.Command("git", "log", "-1", "--date=format:%Y-%m-%d",
-				"--pretty=format:%h%x00%ad%x00%aN%x00%aE%x00%s", "--", f.entry.Name())
+				"--pretty=format:%h%x00%ad%x00%aN%x00%aE%x00%s", "--", f.Name())
 			out, _ := cmd.Output()
 			results <- gitLogResult{file: f, output: out}
 		}(file)
@@ -562,7 +635,7 @@ func parseDiffStat(diffStat []byte, files []*File) {
 	for _, file := range files {
 		// if the file has any diffs, sum them up. This way we aggregate a
 		// directory's diffs
-		if stats, ok := diffStats[file.entry.Name()]; ok {
+		if stats, ok := diffStats[file.Name()]; ok {
 			plus := 0
 			minus := 0
 			for _, stat := range stats {
