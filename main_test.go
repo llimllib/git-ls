@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"os"
+	"strings"
 	"testing"
 	"time"
 )
@@ -238,6 +239,64 @@ func TestDirectoryArgDoesNotHang(t *testing.T) {
 		// Test passed
 	case <-time.After(1 * time.Second):
 		t.Fatal("parseArgs hung when given a directory argument - argument parsing loop is infinite")
+	}
+}
+
+// TestShowFileHyperlinks verifies that file hyperlinks are generated correctly.
+// This is a regression test for a bug where passing a directory argument would
+// cause incorrect hyperlinks (e.g., "git-ls bin" would generate links like
+// "bin/bin/release.sh" instead of "bin/release.sh").
+func TestShowFileHyperlinks(t *testing.T) {
+	tests := []struct {
+		name        string
+		dir         string // absolute path passed to show()
+		fileName    string
+		expectedURL string // the file path portion we expect in the URL
+	}{
+		{
+			name:        "file in subdirectory",
+			dir:         "/repo/bin",
+			fileName:    "release.sh",
+			expectedURL: "/repo/bin/release.sh",
+		},
+		{
+			name:        "file in root",
+			dir:         "/repo",
+			fileName:    "main.go",
+			expectedURL: "/repo/main.go",
+		},
+		{
+			name:        "nested subdirectory",
+			dir:         "/repo/src/pkg",
+			fileName:    "util.go",
+			expectedURL: "/repo/src/pkg/util.go",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			files := []*File{
+				{entry: &mockDirEntry{name: tt.fileName}},
+			}
+
+			var buf strings.Builder
+			show(&buf, 200, files, "", tt.dir)
+			output := buf.String()
+
+			// Check that the output contains the correct file URL path
+			// The hyperlink format is: \e]8;;<url>\e\<text>\e]8;;\e\
+			expectedPath := fmt.Sprintf("file://%s%s", must(os.Hostname()), tt.expectedURL)
+			if !strings.Contains(output, expectedPath) {
+				t.Errorf("Expected output to contain %q, but got:\n%q", expectedPath, output)
+			}
+
+			// Make sure we don't have a doubled directory (the bug we're preventing)
+			// e.g., /repo/bin/bin/release.sh
+			doubledDir := tt.dir + "/" + tt.dir[strings.LastIndex(tt.dir, "/")+1:]
+			if strings.Contains(output, doubledDir+"/") {
+				t.Errorf("Found doubled directory path in output: %q", output)
+			}
+		})
 	}
 }
 

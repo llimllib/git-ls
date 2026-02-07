@@ -219,7 +219,7 @@ func main() {
 		maxWidth = 80 // default when not a TTY
 	}
 	fmt.Printf("On branch %s%s%s\n\n", RED, gitData.currentBranch, RESET)
-	show(os.Stdout, maxWidth, files, isGithub(gitData.remotes), must(filepath.Abs(dir)))
+	show(os.Stdout, maxWidth, files, isGithub(gitData.remotes), must(filepath.Abs(".")))
 }
 
 func link(url string, name string) string {
