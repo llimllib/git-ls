@@ -49,6 +49,7 @@ func (f *File) Name() string {
 
 const (
 	BLUE      = "\x1b[34m"
+	CYAN      = "\x1b[36m"
 	GREEN     = "\x1b[32m"
 	RED       = "\x1b[31m"
 	RESET     = "\x1b[0m"
@@ -331,6 +332,7 @@ func show(out io.Writer, maxWidth int, files []*File, githubURL string, dir stri
 	maxStatus := 0
 	maxDiffStat := 0
 	maxNameLen := 0
+	maxHashLen := 0
 	for _, file := range files {
 		if len(file.status) > maxStatus {
 			maxStatus = len(file.status)
@@ -340,6 +342,9 @@ func show(out io.Writer, maxWidth int, files []*File, githubURL string, dir stri
 		}
 		if len(file.Name()) > maxNameLen {
 			maxNameLen = len(file.Name())
+		}
+		if len(file.hash) > maxHashLen {
+			maxHashLen = len(file.hash)
 		}
 	}
 
@@ -383,6 +388,35 @@ func show(out io.Writer, maxWidth int, files []*File, githubURL string, dir stri
 			must(fmt.Fprintf(out, "%s", RESET))
 		}
 		lineWidth += maxNameLen
+
+		// write the commit hash
+		if maxHashLen > 0 {
+			must(fmt.Fprintf(out, " "))
+			lineWidth += 1
+			if len(githubURL) > 0 && file.hash != "" {
+				commitURL := fmt.Sprintf("%s/commit/%s", githubURL, file.hash)
+				if file.isDeleted {
+					must(fmt.Fprintf(out, "%s%s%s", CYAN, link(commitURL, file.hash), RESET))
+				} else {
+					must(fmt.Fprintf(out, "%s%s%s", CYAN, link(commitURL, file.hash), RESET))
+				}
+			} else {
+				must(fmt.Fprintf(out, "%s%s%s", CYAN, file.hash, RESET))
+			}
+			// pad spaces to the right up to maxHashLen
+			for i := 0; i < maxHashLen-len(file.hash); i++ {
+				must(fmt.Fprintf(out, " "))
+			}
+			lineWidth += maxHashLen
+		}
+
+		if lineWidth >= maxWidth {
+			if file.isDeleted {
+				must(fmt.Fprintf(out, "%s", RESET))
+			}
+			fmt.Println("")
+			continue
+		}
 
 		// write the last modified date
 		must(fmt.Fprintf(out, " %s", file.lastModified))
