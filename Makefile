@@ -12,6 +12,11 @@ git-ls: $(SRC)
 # https://golangci-lint.run/welcome/install/#local-installation
 .PHONY: lint
 lint:
+	@if [ -n "$$(gofmt -l .)" ]; then \
+		echo "Error: The following files need to be formatted with 'go fmt':"; \
+		gofmt -l .; \
+		exit 1; \
+	fi
 	golangci-lint run
 
 .PHONY: publish
