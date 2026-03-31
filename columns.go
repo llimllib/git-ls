@@ -68,11 +68,7 @@ func calculateColumnWidths(files []*File, columns []Column) map[Column]int {
 			case ColFilename:
 				w = len(file.Name())
 			case ColShorthash:
-				if len(file.hash) >= 7 {
-					w = 7
-				} else {
-					w = len(file.hash)
-				}
+				w = len(file.shortHash)
 			case ColHash:
 				w = len(file.hash)
 			case ColDate:
@@ -147,18 +143,14 @@ func renderFilename(out io.Writer, file *File, maxWidth int, githubURL string, d
 // renderShorthash renders the short commit hash
 func renderShorthash(out io.Writer, file *File, maxWidth int, githubURL string, dir string) {
 	if maxWidth > 0 {
-		shortHash := ""
-		if len(file.hash) >= 7 {
-			shortHash = file.hash[:7]
-		} else {
-			shortHash = file.hash
-		}
+		shortHash := file.shortHash
+		shortHashWidth := min(len(shortHash), maxWidth)
 
 		if len(githubURL) > 0 && shortHash != "" {
 			commitURL := fmt.Sprintf("%s/commit/%s", githubURL, file.hash)
-			must(fmt.Fprintf(out, "%s%s%s", CYAN, link(commitURL, shortHash), RESET))
+			must(fmt.Fprintf(out, "%s%s%s", CYAN, link(commitURL, shortHash[:shortHashWidth]), RESET))
 		} else {
-			must(fmt.Fprintf(out, "%s%s%s", CYAN, shortHash, RESET))
+			must(fmt.Fprintf(out, "%s%s%s", CYAN, shortHash[:shortHashWidth], RESET))
 		}
 
 		// pad spaces to the right up to maxWidth

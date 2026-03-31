@@ -31,7 +31,8 @@ type File struct {
 	diffStat     string
 	author       string
 	authorEmail  string
-	hash         string
+	hash         string // full hash
+	shortHash    string // Git's abbreviated hash (length varies by repo size)
 	lastModified string
 	message      string
 	isDir        bool
@@ -533,7 +534,7 @@ func parseGitLogParallel(files []*File) {
 	for _, file := range files {
 		go func(f *File) {
 			cmd := exec.Command("git", "log", "-1", "--date=format:%Y-%m-%d",
-				"--pretty=format:%H%x00%ad%x00%aN%x00%aE%x00%s", "--", f.Name())
+				"--pretty=format:%H%x00%h%x00%ad%x00%aN%x00%aE%x00%s", "--", f.Name())
 			out, _ := cmd.Output()
 			results <- gitLogResult{file: f, output: out}
 		}(file)
@@ -546,16 +547,17 @@ func parseGitLogParallel(files []*File) {
 			continue
 		}
 
-		parts := strings.SplitN(string(result.output), "\x00", 5)
-		if len(parts) != 5 {
+		parts := strings.SplitN(string(result.output), "\x00", 6)
+		if len(parts) != 6 {
 			continue
 		}
 
 		result.file.hash = parts[0]
-		result.file.lastModified = parts[1]
-		result.file.author = parts[2]
-		result.file.authorEmail = parts[3]
-		result.file.message = parts[4]
+		result.file.shortHash = parts[1]
+		result.file.lastModified = parts[2]
+		result.file.author = parts[3]
+		result.file.authorEmail = parts[4]
+		result.file.message = parts[5]
 	}
 }
 
