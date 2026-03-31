@@ -280,7 +280,7 @@ func TestShowFileHyperlinks(t *testing.T) {
 			}
 
 			var buf strings.Builder
-			show(&buf, 200, files, "", tt.dir)
+			showColumns(&buf, 200, files, "", tt.dir, AllColumns())
 			output := buf.String()
 
 			// Check that the output contains the correct file URL path
