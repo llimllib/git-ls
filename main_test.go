@@ -182,27 +182,27 @@ func parseInt(s string) (int, error) {
 
 func TestParseArgs(t *testing.T) {
 	tests := []struct {
-		name         string
-		args         []string
-		expectedDir  string
+		name          string
+		args          []string
+		expectedDir   string
 		expectedWidth int
 	}{
 		{
-			name:         "no arguments",
-			args:         []string{},
-			expectedDir:  ".",
+			name:          "no arguments",
+			args:          []string{},
+			expectedDir:   ".",
 			expectedWidth: 4,
 		},
 		{
-			name:         "directory argument",
-			args:         []string{"bin"},
-			expectedDir:  "bin",
+			name:          "directory argument",
+			args:          []string{"bin"},
+			expectedDir:   "bin",
 			expectedWidth: 4,
 		},
 		{
-			name:         "directory with path",
-			args:         []string{"some/nested/dir"},
-			expectedDir:  "some/nested/dir",
+			name:          "directory with path",
+			args:          []string{"some/nested/dir"},
+			expectedDir:   "some/nested/dir",
 			expectedWidth: 4,
 		},
 	}
