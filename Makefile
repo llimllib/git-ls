@@ -12,6 +12,11 @@ git-ls: $(SRC)
 # https://golangci-lint.run/welcome/install/#local-installation
 .PHONY: lint
 lint:
+	@if [ -n "$$(go fmt ./...)" ]; then \
+		echo "Error: The following files were reformatted. Please commit the changes:"; \
+		go fmt ./...; \
+		exit 1; \
+	fi
 	golangci-lint run
 
 .PHONY: publish

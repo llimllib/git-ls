@@ -31,7 +31,8 @@ type File struct {
 	diffStat     string
 	author       string
 	authorEmail  string
-	hash         string
+	hash         string // full hash
+	shortHash    string // Git's abbreviated hash (length varies by repo size)
 	lastModified string
 	message      string
 	isDir        bool
@@ -133,6 +134,12 @@ OPTIONS
     --diffWidth=n
         Print the diffStat graph with the given width. Default is 4
 
+    --format=col1,col2,...
+        Specify which columns to display and in what order. Valid columns:
+        status, diff, filename, shorthash, hash, date, author, email,
+        numstat, commitmessage
+        Default: status,diff,filename,shorthash,date,author,commitmessage
+
 %s
 `, link("https://github.com/llimllib/git-ls", "https://github.com/llimllib/git-ls"))
 }
@@ -140,6 +147,7 @@ OPTIONS
 func main() {
 	argv := os.Args[1:]
 	diffWidth := 4
+	var formatColumns []Column
 	for len(argv) > 0 {
 		if argv[0] == "--version" {
 			fmt.Printf("%s\n", VERSION)
@@ -160,6 +168,19 @@ func main() {
 				argv = argv[1:]
 			} else {
 				diffWidth = must(strconv.Atoi(argv[1]))
+				argv = argv[2:]
+			}
+		} else if strings.HasPrefix(argv[0], "--format") {
+			if len(argv) == 1 {
+				if strings.Contains(argv[0], "=") {
+					parts := strings.SplitN(argv[0], "=", 2)
+					formatColumns = parseFormat(parts[1])
+				} else {
+					log.Fatalf("--format requires an argument")
+				}
+				argv = argv[1:]
+			} else {
+				formatColumns = parseFormat(argv[1])
 				argv = argv[2:]
 			}
 		} else {
@@ -215,12 +236,36 @@ func main() {
 		return strings.Compare(strings.ToLower(a.Name()), strings.ToLower(b.Name()))
 	})
 
+	// Use default columns if not specified
+	if len(formatColumns) == 0 {
+		formatColumns = AllColumns()
+	}
+
 	maxWidth := columns(os.Stdout.Fd())
 	if maxWidth == 0 {
 		maxWidth = 80 // default when not a TTY
 	}
 	fmt.Printf("On branch %s%s%s\n\n", RED, gitData.currentBranch, RESET)
-	show(os.Stdout, maxWidth, files, isGithub(gitData.remotes), must(filepath.Abs(".")))
+	showColumns(os.Stdout, maxWidth, files, isGithub(gitData.remotes), must(filepath.Abs(".")), formatColumns)
+}
+
+func parseFormat(formatStr string) []Column {
+	validCols := ValidColumns()
+	colNames := strings.Split(formatStr, ",")
+	var columns []Column
+
+	for _, name := range colNames {
+		name = strings.TrimSpace(name)
+		if col, ok := validCols[name]; ok {
+			columns = append(columns, col)
+		} else {
+			fmt.Fprintf(os.Stderr, "Error: Invalid column name '%s'\n", name)
+			fmt.Fprintf(os.Stderr, "Valid columns: status, diff, filename, shorthash, hash, date, author, email, numstat, commitmessage\n")
+			os.Exit(1)
+		}
+	}
+
+	return columns
 }
 
 func link(url string, name string) string {
@@ -328,151 +373,45 @@ func makeDiffGraph(file *File, width int) string {
 		RESET)
 }
 
-func show(out io.Writer, maxWidth int, files []*File, githubURL string, dir string) {
-	maxStatus := 0
-	maxDiffStat := 0
-	maxNameLen := 0
-	maxHashLen := 0
-	for _, file := range files {
-		if len(file.status) > maxStatus {
-			maxStatus = len(file.status)
-		}
-		if width(file.diffStat) > maxDiffStat {
-			maxDiffStat = width(file.diffStat)
-		}
-		if len(file.Name()) > maxNameLen {
-			maxNameLen = len(file.Name())
-		}
-		if len(file.hash) > maxHashLen {
-			maxHashLen = len(file.hash)
-		}
-	}
+func showColumns(out io.Writer, maxWidth int, files []*File, githubURL string, dir string, columns []Column) {
+	// Calculate max widths for each column
+	colWidths := calculateColumnWidths(files, columns)
 
+	// Render each file
 	for _, file := range files {
-		// lineWidth tracks the width of the current line
 		lineWidth := 0
 
-		// print the file's git status. If there are no modified files, skip entirely
-		if maxStatus > 0 {
-			must(fmt.Fprintf(out, fmt.Sprintf("%%%ds ", maxStatus), file.status))
-			lineWidth += maxStatus + 1
-
-			// print the diffstat summary for the file
-			must(fmt.Fprintf(out, "%s", file.diffStat))
-			for i := 0; i < maxDiffStat-width(file.diffStat)+1; i++ {
+		// Render each column in order
+		for i, col := range columns {
+			// Add space between columns (except before first column)
+			if i > 0 {
 				must(fmt.Fprintf(out, " "))
+				lineWidth += 1
 			}
-			lineWidth += 5
+
+			// Check if we have space for this column
+			if lineWidth >= maxWidth {
+				break
+			}
+
+			// Calculate available width for this column
+			availableWidth := maxWidth - lineWidth
+			colWidth := colWidths[col]
+			if colWidth > availableWidth {
+				colWidth = availableWidth
+			}
+
+			// Render the column
+			renderer := getColumnRenderer(col)
+			renderer(out, file, colWidth, githubURL, dir)
+			lineWidth += colWidth
 		}
 
+		// Reset any remaining formatting (like strikethrough for deleted files)
 		if file.isDeleted {
-			must(fmt.Fprintf(out, "%s%s", RED, STRIKEOUT))
-		} else if file.isDir {
-			must(fmt.Fprintf(out, "%s", BLUE))
-		} else if file.isExe {
-			must(fmt.Fprintf(out, "%s", GREEN))
-		}
-		// link the file name to the file's location (but not for deleted files)
-		if file.isDeleted {
-			must(fmt.Fprintf(out, "%s", file.Name()))
-		} else {
-			fileURL := fmt.Sprintf("file://%s%s", must(os.Hostname()), filepath.Join(dir, file.Name()))
-			must(fmt.Fprintf(out, "%s", link(fileURL, file.Name())))
-		}
-		// pad spaces to the right up to maxNameLen
-		for i := 0; i < maxNameLen-len(file.Name()); i++ {
-			must(fmt.Fprintf(out, " "))
-		}
-		// reset color for dir/exe but not deleted (strikethrough continues)
-		if file.isDir || file.isExe {
 			must(fmt.Fprintf(out, "%s", RESET))
 		}
-		lineWidth += maxNameLen
-
-		// write the commit hash
-		if maxHashLen > 0 {
-			must(fmt.Fprintf(out, " "))
-			lineWidth += 1
-			if len(githubURL) > 0 && file.hash != "" {
-				commitURL := fmt.Sprintf("%s/commit/%s", githubURL, file.hash)
-				if file.isDeleted {
-					must(fmt.Fprintf(out, "%s%s%s", CYAN, link(commitURL, file.hash), RESET))
-				} else {
-					must(fmt.Fprintf(out, "%s%s%s", CYAN, link(commitURL, file.hash), RESET))
-				}
-			} else {
-				must(fmt.Fprintf(out, "%s%s%s", CYAN, file.hash, RESET))
-			}
-			// pad spaces to the right up to maxHashLen
-			for i := 0; i < maxHashLen-len(file.hash); i++ {
-				must(fmt.Fprintf(out, " "))
-			}
-			lineWidth += maxHashLen
-		}
-
-		if lineWidth >= maxWidth {
-			if file.isDeleted {
-				must(fmt.Fprintf(out, "%s", RESET))
-			}
-			fmt.Println("")
-			continue
-		}
-
-		// write the last modified date
-		must(fmt.Fprintf(out, " %s", file.lastModified))
-		lineWidth += len(file.lastModified) + 1
-
-		if lineWidth >= maxWidth {
-			if file.isDeleted {
-				must(fmt.Fprintf(out, "%s", RESET))
-			}
-			fmt.Println("")
-			continue
-		}
-		authorWidth := min(len(file.author), maxWidth-1-lineWidth)
-		lineWidth += authorWidth + 1
-		if len(githubURL) > 0 {
-			// if this is a github repo, link the author name to their commits
-			// page on github. It would be cool to hyperlink the author to
-			// a git command, but I'm not sure how to give a URL for the command
-			// `git log --author=Janet`
-			authorLink := fmt.Sprintf("%s/commits?author=%s", githubURL, file.authorEmail)
-			if file.isDeleted {
-				must(fmt.Fprintf(out, " %s", link(authorLink, file.author[:authorWidth])))
-			} else {
-				must(fmt.Fprintf(out, " %s%s%s", YELLOW, link(authorLink, file.author[:authorWidth]), RESET))
-			}
-		} else {
-			if file.isDeleted {
-				must(fmt.Fprintf(out, " %s", file.author[:authorWidth]))
-			} else {
-				must(fmt.Fprintf(out, " %s%s%s", YELLOW, file.author[:authorWidth], RESET))
-			}
-		}
-
-		// If this is a github repo, look for #<issue> links and linkify them.
-		// Otherwise just output the first 80 chars of the commit msg. Would it
-		// be better to use the full width of the terminal if available here,
-		// or just keep it shortish?
-		if lineWidth >= maxWidth {
-			if file.isDeleted {
-				must(fmt.Fprintf(out, "%s", RESET))
-			}
-			fmt.Println("")
-			continue
-		}
-		messageWidth := min(len(file.message), maxWidth-1-lineWidth)
-		if file.isDeleted {
-			if len(githubURL) > 0 {
-				must(fmt.Fprintf(out, " %s%s\n", linkify(file.message[:messageWidth], githubURL, file.hash), RESET))
-			} else {
-				must(fmt.Fprintf(out, " %s%s\n", file.message[:messageWidth], RESET))
-			}
-		} else if len(githubURL) > 0 {
-			must(fmt.Fprintf(out, " %s\n", linkify(file.message[:messageWidth], githubURL, file.hash)))
-		} else {
-			must(fmt.Fprintf(out, " %s\n", file.message[:messageWidth]))
-		}
+		must(fmt.Fprintf(out, "\n"))
 	}
 }
 
@@ -595,7 +534,7 @@ func parseGitLogParallel(files []*File) {
 	for _, file := range files {
 		go func(f *File) {
 			cmd := exec.Command("git", "log", "-1", "--date=format:%Y-%m-%d",
-				"--pretty=format:%h%x00%ad%x00%aN%x00%aE%x00%s", "--", f.Name())
+				"--pretty=format:%H%x00%h%x00%ad%x00%aN%x00%aE%x00%s", "--", f.Name())
 			out, _ := cmd.Output()
 			results <- gitLogResult{file: f, output: out}
 		}(file)
@@ -608,16 +547,17 @@ func parseGitLogParallel(files []*File) {
 			continue
 		}
 
-		parts := strings.SplitN(string(result.output), "\x00", 5)
-		if len(parts) != 5 {
+		parts := strings.SplitN(string(result.output), "\x00", 6)
+		if len(parts) != 6 {
 			continue
 		}
 
 		result.file.hash = parts[0]
-		result.file.lastModified = parts[1]
-		result.file.author = parts[2]
-		result.file.authorEmail = parts[3]
-		result.file.message = parts[4]
+		result.file.shortHash = parts[1]
+		result.file.lastModified = parts[2]
+		result.file.author = parts[3]
+		result.file.authorEmail = parts[4]
+		result.file.message = parts[5]
 	}
 }
 
