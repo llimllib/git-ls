@@ -52,12 +52,6 @@ func ValidColumns() map[string]Column {
 	}
 }
 
-// columnInfo holds rendering information for a column
-type columnInfo struct {
-	width    int
-	renderer func(out io.Writer, file *File, width int, githubURL string, dir string)
-}
-
 // calculateColumnWidths computes the maximum width needed for each column
 func calculateColumnWidths(files []*File, columns []Column) map[Column]int {
 	widths := make(map[Column]int)
