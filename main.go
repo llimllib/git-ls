@@ -478,7 +478,10 @@ func showColumns(out io.Writer, maxWidth int, files []*File, rctx *RenderContext
 }
 
 func gitRemotes() []byte {
-	cmd := exec.Command("git", "remote", "-v")
+	// disable core.fsmonitor because git will run malicious executables
+	// https://github.com/califio/publications/blob/main/MADBugs/vim-vs-emacs-vs-claude/Emacs.md
+	// we do this on every `git` call
+	cmd := exec.Command("git", "-c", "core.fsmonitor=false", "remote", "-v")
 	out, err := cmd.Output()
 	if err != nil {
 		log.Fatalf("Failed to get git status: %v", err)
@@ -496,7 +499,7 @@ func isGithub(out []byte) string {
 }
 
 func gitCurrentBranch() string {
-	cmd := exec.Command("git", "rev-parse", "--abbrev-ref", "HEAD")
+	cmd := exec.Command("git", "-c", "core.fsmonitor=false", "rev-parse", "--abbrev-ref", "HEAD")
 	out, err := cmd.Output()
 	if err != nil {
 		log.Fatalf("Failed to get git status: %v", err)
@@ -506,7 +509,7 @@ func gitCurrentBranch() string {
 
 // gitRoot returns the root directory of the git repository
 func gitRoot() string {
-	cmd := exec.Command("git", "rev-parse", "--show-toplevel")
+	cmd := exec.Command("git", "-c", "core.fsmonitor=false", "rev-parse", "--show-toplevel")
 	out, err := cmd.Output()
 	if err != nil {
 		log.Fatalf("Failed to get git status: %v", err)
@@ -517,7 +520,7 @@ func gitRoot() string {
 // gitStatus accepts a dir and a slice of files, and adds the git status to
 // each file in place
 func gitStatus() []byte {
-	cmd := exec.Command("git", "status", "--porcelain", "--ignored")
+	cmd := exec.Command("git", "-c", "core.fsmonitor=false", "status", "--porcelain", "--ignored")
 	out, err := cmd.Output()
 	if err != nil {
 		log.Fatalf("Failed to get git status: %v", err)
@@ -595,7 +598,7 @@ func parseGitLogParallel(files []*File) {
 	// Launch all git log commands in parallel
 	for _, file := range files {
 		go func(f *File) {
-			cmd := exec.Command("git", "log", "-1", "--date=format:%Y-%m-%d",
+			cmd := exec.Command("git", "-c", "core.fsmonitor=false", "log", "-1", "--date=format:%Y-%m-%d",
 				"--pretty=format:%H%x00%h%x00%ad%x00%aN%x00%aE%x00%s", "--", f.Name())
 			out, _ := cmd.Output()
 			results <- gitLogResult{file: f, output: out}
@@ -646,7 +649,7 @@ func diffInt(s string) int {
 }
 
 func gitDiffStat() []byte {
-	cmd := exec.Command("git", "diff", "--numstat", "--relative", "HEAD")
+	cmd := exec.Command("git", "-c", "core.fsmonitor=false", "diff", "--numstat", "--relative", "HEAD")
 	output, err := cmd.Output()
 	if err != nil {
 		log.Fatalf("Diffstat error: %v", err)
