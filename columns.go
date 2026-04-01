@@ -97,7 +97,7 @@ func calculateColumnWidths(files []*File, columns []Column) map[Column]int {
 // renderStatus renders the status column
 func renderStatus(out io.Writer, file *File, maxWidth int, rctx *RenderContext) {
 	if maxWidth > 0 {
-		must(fmt.Fprintf(out, fmt.Sprintf("%%%ds ", maxWidth), file.status))
+		must(fmt.Fprintf(out, fmt.Sprintf("%%%ds", maxWidth), file.status))
 	}
 }
 
@@ -105,7 +105,7 @@ func renderStatus(out io.Writer, file *File, maxWidth int, rctx *RenderContext) 
 func renderDiff(out io.Writer, file *File, maxWidth int, rctx *RenderContext) {
 	if maxWidth > 0 {
 		must(fmt.Fprintf(out, "%s", file.diffStat))
-		for i := 0; i < maxWidth-width(file.diffStat)+1; i++ {
+		for i := 0; i < maxWidth-width(file.diffStat); i++ {
 			must(fmt.Fprintf(out, " "))
 		}
 	}
@@ -265,6 +265,11 @@ func renderCommitMessage(out io.Writer, file *File, maxWidth int, rctx *RenderCo
 		must(fmt.Fprintf(out, "%s", linkify(file.message[:messageWidth], rctx.GithubURL, file.hash)))
 	} else {
 		must(fmt.Fprintf(out, "%s", file.message[:messageWidth]))
+	}
+
+	// pad spaces to the right up to maxWidth
+	for i := 0; i < maxWidth-messageWidth; i++ {
+		must(fmt.Fprintf(out, " "))
 	}
 }
 
