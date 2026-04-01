@@ -40,6 +40,13 @@ type File struct {
 	isDeleted    bool
 }
 
+// RenderContext holds settings that affect how output is rendered
+type RenderContext struct {
+	GithubURL string
+	Dir       string
+	MonoHash  bool
+}
+
 // Name returns the file name, either from the DirEntry or the name field
 func (f *File) Name() string {
 	if f.entry != nil {
@@ -57,6 +64,48 @@ const (
 	YELLOW    = "\x1b[33m"
 	STRIKEOUT = "\x1b[9m"
 )
+
+// validHashColors contains pre-computed 8-bit terminal color codes
+// from the 6x6x6 RGB cube (16-231), excluding colors that are too dark,
+// too light, or too gray.
+var validHashColors = []int{
+	18, 19, 20, 21, 24, 25, 26, 27, 28, 29,
+	30, 31, 32, 33, 34, 35, 36, 37, 38, 39,
+	40, 41, 42, 43, 44, 45, 46, 47, 48, 49,
+	50, 51, 54, 55, 56, 57, 61, 62, 63, 64,
+	67, 68, 69, 70, 71, 72, 73, 74, 75, 76,
+	77, 78, 79, 80, 81, 82, 83, 84, 85, 86,
+	87, 88, 89, 90, 91, 92, 93, 94, 97, 98,
+	99, 100, 104, 105, 106, 107, 110, 111, 112, 113,
+	114, 115, 116, 117, 118, 119, 120, 121, 122, 123,
+	124, 125, 126, 127, 128, 129, 130, 131, 132, 133,
+	134, 135, 136, 137, 140, 141, 142, 143, 147, 148,
+	149, 150, 153, 154, 155, 156, 157, 158, 159, 160,
+	161, 162, 163, 164, 165, 166, 167, 168, 169, 170,
+	171, 172, 173, 174, 175, 176, 177, 178, 179, 180,
+	183, 184, 185, 186, 190, 191, 192, 193, 196, 197,
+	198, 199, 200, 201, 202, 203, 204, 205, 206, 207,
+	208, 209, 210, 211, 212, 213, 214, 215, 216, 217,
+	218, 219, 220, 221, 222, 223, 226, 227, 228, 229,
+}
+
+// hashToColor generates a color code for a commit hash.
+// It uses 8-bit terminal colors (\e[38;5;<n>m) from the pre-computed validHashColors.
+func hashToColor(hash string) string {
+	if hash == "" {
+		return CYAN
+	}
+
+	// Calculate a numeric hash from the commit hash string
+	var h uint32
+	for i := 0; i < len(hash) && i < 8; i++ {
+		h = h*31 + uint32(hash[i])
+	}
+
+	// Select a color from the pre-computed valid colors using the hash
+	colorCode := validHashColors[h%uint32(len(validHashColors))]
+	return fmt.Sprintf("\x1b[38;5;%dm", colorCode)
+}
 
 func must[T any](a T, e error) T {
 	if e != nil {
@@ -140,6 +189,10 @@ OPTIONS
         numstat, commitmessage
         Default: status,diff,filename,shorthash,date,author,commitmessage
 
+    --mono-hash
+        Use a single color (cyan) for all commit hashes instead of coloring
+        each hash uniquely based on its value
+
 %s
 `, link("https://github.com/llimllib/git-ls", "https://github.com/llimllib/git-ls"))
 }
@@ -147,6 +200,7 @@ OPTIONS
 func main() {
 	argv := os.Args[1:]
 	diffWidth := 4
+	monoHash := false
 	var formatColumns []Column
 	for len(argv) > 0 {
 		if argv[0] == "--version" {
@@ -157,7 +211,10 @@ func main() {
 			usage()
 			os.Exit(0)
 		}
-		if strings.HasPrefix(argv[0], "--diffWidth") {
+		if argv[0] == "--mono-hash" {
+			monoHash = true
+			argv = argv[1:]
+		} else if strings.HasPrefix(argv[0], "--diffWidth") {
 			if len(argv) == 1 {
 				if strings.Contains(argv[0], "=") {
 					parts := strings.SplitN(argv[0], "=", 2)
@@ -246,7 +303,12 @@ func main() {
 		maxWidth = 80 // default when not a TTY
 	}
 	fmt.Printf("On branch %s%s%s\n\n", RED, gitData.currentBranch, RESET)
-	showColumns(os.Stdout, maxWidth, files, isGithub(gitData.remotes), must(filepath.Abs(".")), formatColumns)
+	rctx := &RenderContext{
+		GithubURL: isGithub(gitData.remotes),
+		Dir:       must(filepath.Abs(".")),
+		MonoHash:  monoHash,
+	}
+	showColumns(os.Stdout, maxWidth, files, rctx, formatColumns)
 }
 
 func parseFormat(formatStr string) []Column {
@@ -373,7 +435,7 @@ func makeDiffGraph(file *File, width int) string {
 		RESET)
 }
 
-func showColumns(out io.Writer, maxWidth int, files []*File, githubURL string, dir string, columns []Column) {
+func showColumns(out io.Writer, maxWidth int, files []*File, rctx *RenderContext, columns []Column) {
 	// Calculate max widths for each column
 	colWidths := calculateColumnWidths(files, columns)
 
@@ -403,7 +465,7 @@ func showColumns(out io.Writer, maxWidth int, files []*File, githubURL string, d
 
 			// Render the column
 			renderer := getColumnRenderer(col)
-			renderer(out, file, colWidth, githubURL, dir)
+			renderer(out, file, colWidth, rctx)
 			lineWidth += colWidth
 		}
 
