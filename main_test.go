@@ -280,7 +280,12 @@ func TestShowFileHyperlinks(t *testing.T) {
 			}
 
 			var buf strings.Builder
-			showColumns(&buf, 200, files, "", tt.dir, AllColumns())
+			rctx := &RenderContext{
+				GithubURL: "",
+				Dir:       tt.dir,
+				MonoHash:  false,
+			}
+			showColumns(&buf, 200, files, rctx, AllColumns())
 			output := buf.String()
 
 			// Check that the output contains the correct file URL path
@@ -297,6 +302,60 @@ func TestShowFileHyperlinks(t *testing.T) {
 				t.Errorf("Found doubled directory path in output: %q", output)
 			}
 		})
+	}
+}
+
+func TestHashToColor(t *testing.T) {
+	tests := []struct {
+		name string
+		hash string
+	}{
+		{
+			name: "empty hash returns cyan",
+			hash: "",
+		},
+		{
+			name: "same hash returns same color",
+			hash: "abc123",
+		},
+		{
+			name: "different hash",
+			hash: "def456",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			color := hashToColor(tt.hash)
+
+			// Empty hash should return CYAN
+			if tt.hash == "" {
+				if color != CYAN {
+					t.Errorf("hashToColor(\"\") = %q, expected CYAN (%q)", color, CYAN)
+				}
+				return
+			}
+
+			// Non-empty hash should return a valid 8-bit color code
+			if !strings.HasPrefix(color, "\x1b[38;5;") || !strings.HasSuffix(color, "m") {
+				t.Errorf("hashToColor(%q) = %q, expected 8-bit color format", tt.hash, color)
+			}
+
+			// Same hash should always return same color
+			color2 := hashToColor(tt.hash)
+			if color != color2 {
+				t.Errorf("hashToColor not deterministic: first call=%q, second call=%q", color, color2)
+			}
+		})
+	}
+
+	// Test that different hashes (likely) produce different colors
+	hash1 := "55b998eae87118427808144927549a39e821c0fb"
+	hash2 := "dd59602e5a8af4da0429237c2f2d547ee1bdc800"
+	color1 := hashToColor(hash1)
+	color2 := hashToColor(hash2)
+	if color1 == color2 {
+		t.Errorf("Different hashes produced same color: %q and %q both got %q", hash1, hash2, color1)
 	}
 }
 

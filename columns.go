@@ -95,14 +95,14 @@ func calculateColumnWidths(files []*File, columns []Column) map[Column]int {
 }
 
 // renderStatus renders the status column
-func renderStatus(out io.Writer, file *File, maxWidth int, githubURL string, dir string) {
+func renderStatus(out io.Writer, file *File, maxWidth int, rctx *RenderContext) {
 	if maxWidth > 0 {
 		must(fmt.Fprintf(out, fmt.Sprintf("%%%ds ", maxWidth), file.status))
 	}
 }
 
 // renderDiff renders the diff graph column
-func renderDiff(out io.Writer, file *File, maxWidth int, githubURL string, dir string) {
+func renderDiff(out io.Writer, file *File, maxWidth int, rctx *RenderContext) {
 	if maxWidth > 0 {
 		must(fmt.Fprintf(out, "%s", file.diffStat))
 		for i := 0; i < maxWidth-width(file.diffStat)+1; i++ {
@@ -112,7 +112,7 @@ func renderDiff(out io.Writer, file *File, maxWidth int, githubURL string, dir s
 }
 
 // renderFilename renders the filename column with colors and hyperlinks
-func renderFilename(out io.Writer, file *File, maxWidth int, githubURL string, dir string) {
+func renderFilename(out io.Writer, file *File, maxWidth int, rctx *RenderContext) {
 	if file.isDeleted {
 		must(fmt.Fprintf(out, "%s%s", RED, STRIKEOUT))
 	} else if file.isDir {
@@ -125,7 +125,7 @@ func renderFilename(out io.Writer, file *File, maxWidth int, githubURL string, d
 	if file.isDeleted {
 		must(fmt.Fprintf(out, "%s", file.Name()))
 	} else {
-		fileURL := fmt.Sprintf("file://%s%s", must(os.Hostname()), filepath.Join(dir, file.Name()))
+		fileURL := fmt.Sprintf("file://%s%s", must(os.Hostname()), filepath.Join(rctx.Dir, file.Name()))
 		must(fmt.Fprintf(out, "%s", link(fileURL, file.Name())))
 	}
 
@@ -141,16 +141,22 @@ func renderFilename(out io.Writer, file *File, maxWidth int, githubURL string, d
 }
 
 // renderShorthash renders the short commit hash
-func renderShorthash(out io.Writer, file *File, maxWidth int, githubURL string, dir string) {
+func renderShorthash(out io.Writer, file *File, maxWidth int, rctx *RenderContext) {
 	if maxWidth > 0 {
 		shortHash := file.shortHash
 		shortHashWidth := min(len(shortHash), maxWidth)
-
-		if len(githubURL) > 0 && shortHash != "" {
-			commitURL := fmt.Sprintf("%s/commit/%s", githubURL, file.hash)
-			must(fmt.Fprintf(out, "%s%s%s", CYAN, link(commitURL, shortHash[:shortHashWidth]), RESET))
+		var color string
+		if rctx.MonoHash {
+			color = CYAN
 		} else {
-			must(fmt.Fprintf(out, "%s%s%s", CYAN, shortHash[:shortHashWidth], RESET))
+			color = hashToColor(file.hash)
+		}
+
+		if len(rctx.GithubURL) > 0 && shortHash != "" {
+			commitURL := fmt.Sprintf("%s/commit/%s", rctx.GithubURL, file.hash)
+			must(fmt.Fprintf(out, "%s%s%s", color, link(commitURL, shortHash[:shortHashWidth]), RESET))
+		} else {
+			must(fmt.Fprintf(out, "%s%s%s", color, shortHash[:shortHashWidth], RESET))
 		}
 
 		// pad spaces to the right up to maxWidth
@@ -161,13 +167,19 @@ func renderShorthash(out io.Writer, file *File, maxWidth int, githubURL string, 
 }
 
 // renderHash renders the full commit hash
-func renderHash(out io.Writer, file *File, maxWidth int, githubURL string, dir string) {
+func renderHash(out io.Writer, file *File, maxWidth int, rctx *RenderContext) {
 	if maxWidth > 0 {
-		if len(githubURL) > 0 && file.hash != "" {
-			commitURL := fmt.Sprintf("%s/commit/%s", githubURL, file.hash)
-			must(fmt.Fprintf(out, "%s%s%s", CYAN, link(commitURL, file.hash), RESET))
+		var color string
+		if rctx.MonoHash {
+			color = CYAN
 		} else {
-			must(fmt.Fprintf(out, "%s%s%s", CYAN, file.hash, RESET))
+			color = hashToColor(file.hash)
+		}
+		if len(rctx.GithubURL) > 0 && file.hash != "" {
+			commitURL := fmt.Sprintf("%s/commit/%s", rctx.GithubURL, file.hash)
+			must(fmt.Fprintf(out, "%s%s%s", color, link(commitURL, file.hash), RESET))
+		} else {
+			must(fmt.Fprintf(out, "%s%s%s", color, file.hash, RESET))
 		}
 
 		// pad spaces to the right up to maxWidth
@@ -178,7 +190,7 @@ func renderHash(out io.Writer, file *File, maxWidth int, githubURL string, dir s
 }
 
 // renderDate renders the date column
-func renderDate(out io.Writer, file *File, maxWidth int, githubURL string, dir string) {
+func renderDate(out io.Writer, file *File, maxWidth int, rctx *RenderContext) {
 	must(fmt.Fprintf(out, "%s", file.lastModified))
 	// pad spaces to the right up to maxWidth
 	for i := 0; i < maxWidth-len(file.lastModified); i++ {
@@ -187,10 +199,10 @@ func renderDate(out io.Writer, file *File, maxWidth int, githubURL string, dir s
 }
 
 // renderAuthor renders the author column with hyperlinks
-func renderAuthor(out io.Writer, file *File, maxWidth int, githubURL string, dir string) {
+func renderAuthor(out io.Writer, file *File, maxWidth int, rctx *RenderContext) {
 	authorWidth := min(len(file.author), maxWidth)
-	if len(githubURL) > 0 {
-		authorLink := fmt.Sprintf("%s/commits?author=%s", githubURL, file.authorEmail)
+	if len(rctx.GithubURL) > 0 {
+		authorLink := fmt.Sprintf("%s/commits?author=%s", rctx.GithubURL, file.authorEmail)
 		if file.isDeleted {
 			must(fmt.Fprintf(out, "%s", link(authorLink, file.author[:authorWidth])))
 		} else {
@@ -211,7 +223,7 @@ func renderAuthor(out io.Writer, file *File, maxWidth int, githubURL string, dir
 }
 
 // renderEmail renders the author email column
-func renderEmail(out io.Writer, file *File, maxWidth int, githubURL string, dir string) {
+func renderEmail(out io.Writer, file *File, maxWidth int, rctx *RenderContext) {
 	emailWidth := min(len(file.authorEmail), maxWidth)
 	must(fmt.Fprintf(out, "%s", file.authorEmail[:emailWidth]))
 
@@ -222,7 +234,7 @@ func renderEmail(out io.Writer, file *File, maxWidth int, githubURL string, dir 
 }
 
 // renderNumstat renders the numeric diffstat
-func renderNumstat(out io.Writer, file *File, maxWidth int, githubURL string, dir string) {
+func renderNumstat(out io.Writer, file *File, maxWidth int, rctx *RenderContext) {
 	if file.diffSum != nil {
 		numstat := fmt.Sprintf("+%d/-%d", file.diffSum.plus, file.diffSum.minus)
 		numstatWidth := min(len(numstat), maxWidth)
@@ -241,23 +253,23 @@ func renderNumstat(out io.Writer, file *File, maxWidth int, githubURL string, di
 }
 
 // renderCommitMessage renders the commit message with issue linkification
-func renderCommitMessage(out io.Writer, file *File, maxWidth int, githubURL string, dir string) {
+func renderCommitMessage(out io.Writer, file *File, maxWidth int, rctx *RenderContext) {
 	messageWidth := min(len(file.message), maxWidth)
 	if file.isDeleted {
-		if len(githubURL) > 0 {
-			must(fmt.Fprintf(out, "%s", linkify(file.message[:messageWidth], githubURL, file.hash)))
+		if len(rctx.GithubURL) > 0 {
+			must(fmt.Fprintf(out, "%s", linkify(file.message[:messageWidth], rctx.GithubURL, file.hash)))
 		} else {
 			must(fmt.Fprintf(out, "%s", file.message[:messageWidth]))
 		}
-	} else if len(githubURL) > 0 {
-		must(fmt.Fprintf(out, "%s", linkify(file.message[:messageWidth], githubURL, file.hash)))
+	} else if len(rctx.GithubURL) > 0 {
+		must(fmt.Fprintf(out, "%s", linkify(file.message[:messageWidth], rctx.GithubURL, file.hash)))
 	} else {
 		must(fmt.Fprintf(out, "%s", file.message[:messageWidth]))
 	}
 }
 
 // getColumnRenderer returns the renderer function for a column
-func getColumnRenderer(col Column) func(out io.Writer, file *File, maxWidth int, githubURL string, dir string) {
+func getColumnRenderer(col Column) func(out io.Writer, file *File, maxWidth int, rctx *RenderContext) {
 	switch col {
 	case ColStatus:
 		return renderStatus
@@ -280,6 +292,6 @@ func getColumnRenderer(col Column) func(out io.Writer, file *File, maxWidth int,
 	case ColCommitMessage:
 		return renderCommitMessage
 	default:
-		return func(out io.Writer, file *File, maxWidth int, githubURL string, dir string) {}
+		return func(out io.Writer, file *File, maxWidth int, rctx *RenderContext) {}
 	}
 }
