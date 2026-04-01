@@ -5,7 +5,15 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+
+	"github.com/mattn/go-runewidth"
 )
+
+// truncateToWidth truncates a string to fit within the specified visual width,
+// properly handling Unicode characters including diacritics
+func truncateToWidth(s string, maxWidth int) string {
+	return runewidth.Truncate(s, maxWidth, "")
+}
 
 // Column represents a displayable column
 type Column string
@@ -62,27 +70,27 @@ func calculateColumnWidths(files []*File, columns []Column) map[Column]int {
 			var w int
 			switch col {
 			case ColStatus:
-				w = len(file.status)
+				w = width(file.status)
 			case ColDiff:
 				w = width(file.diffStat)
 			case ColFilename:
-				w = len(file.Name())
+				w = width(file.Name())
 			case ColShorthash:
-				w = len(file.shortHash)
+				w = width(file.shortHash)
 			case ColHash:
-				w = len(file.hash)
+				w = width(file.hash)
 			case ColDate:
-				w = len(file.lastModified)
+				w = width(file.lastModified)
 			case ColAuthor:
-				w = len(file.author)
+				w = width(file.author)
 			case ColEmail:
-				w = len(file.authorEmail)
+				w = width(file.authorEmail)
 			case ColNumstat:
 				if file.diffSum != nil {
-					w = len(fmt.Sprintf("+%d/-%d", file.diffSum.plus, file.diffSum.minus))
+					w = width(fmt.Sprintf("+%d/-%d", file.diffSum.plus, file.diffSum.minus))
 				}
 			case ColCommitMessage:
-				w = len(file.message)
+				w = width(file.message)
 			}
 			if w > maxWidth {
 				maxWidth = w
@@ -130,7 +138,7 @@ func renderFilename(out io.Writer, file *File, maxWidth int, rctx *RenderContext
 	}
 
 	// pad spaces to the right up to maxWidth
-	for i := 0; i < maxWidth-len(file.Name()); i++ {
+	for i := 0; i < maxWidth-width(file.Name()); i++ {
 		must(fmt.Fprintf(out, " "))
 	}
 
@@ -144,7 +152,7 @@ func renderFilename(out io.Writer, file *File, maxWidth int, rctx *RenderContext
 func renderShorthash(out io.Writer, file *File, maxWidth int, rctx *RenderContext) {
 	if maxWidth > 0 {
 		shortHash := file.shortHash
-		shortHashWidth := min(len(shortHash), maxWidth)
+		shortHashWidth := min(width(shortHash), maxWidth)
 		var color string
 		if rctx.MonoHash {
 			color = CYAN
@@ -154,13 +162,13 @@ func renderShorthash(out io.Writer, file *File, maxWidth int, rctx *RenderContex
 
 		if len(rctx.GithubURL) > 0 && shortHash != "" {
 			commitURL := fmt.Sprintf("%s/commit/%s", rctx.GithubURL, file.hash)
-			must(fmt.Fprintf(out, "%s%s%s", color, link(commitURL, shortHash[:shortHashWidth]), RESET))
+			must(fmt.Fprintf(out, "%s%s%s", color, link(commitURL, shortHash[:min(len(shortHash), maxWidth)]), RESET))
 		} else {
-			must(fmt.Fprintf(out, "%s%s%s", color, shortHash[:shortHashWidth], RESET))
+			must(fmt.Fprintf(out, "%s%s%s", color, shortHash[:min(len(shortHash), maxWidth)], RESET))
 		}
 
 		// pad spaces to the right up to maxWidth
-		for i := 0; i < maxWidth-len(shortHash); i++ {
+		for i := 0; i < maxWidth-shortHashWidth; i++ {
 			must(fmt.Fprintf(out, " "))
 		}
 	}
@@ -183,7 +191,7 @@ func renderHash(out io.Writer, file *File, maxWidth int, rctx *RenderContext) {
 		}
 
 		// pad spaces to the right up to maxWidth
-		for i := 0; i < maxWidth-len(file.hash); i++ {
+		for i := 0; i < maxWidth-width(file.hash); i++ {
 			must(fmt.Fprintf(out, " "))
 		}
 	}
@@ -193,42 +201,50 @@ func renderHash(out io.Writer, file *File, maxWidth int, rctx *RenderContext) {
 func renderDate(out io.Writer, file *File, maxWidth int, rctx *RenderContext) {
 	must(fmt.Fprintf(out, "%s", file.lastModified))
 	// pad spaces to the right up to maxWidth
-	for i := 0; i < maxWidth-len(file.lastModified); i++ {
+	for i := 0; i < maxWidth-width(file.lastModified); i++ {
 		must(fmt.Fprintf(out, " "))
 	}
 }
 
 // renderAuthor renders the author column with hyperlinks
 func renderAuthor(out io.Writer, file *File, maxWidth int, rctx *RenderContext) {
-	authorWidth := min(len(file.author), maxWidth)
+	authorWidth := min(width(file.author), maxWidth)
+
+	// Truncate author string if needed, being careful with multi-byte characters
+	truncatedAuthor := truncateToWidth(file.author, authorWidth)
+
 	if len(rctx.GithubURL) > 0 {
 		authorLink := fmt.Sprintf("%s/commits?author=%s", rctx.GithubURL, file.authorEmail)
 		if file.isDeleted {
-			must(fmt.Fprintf(out, "%s", link(authorLink, file.author[:authorWidth])))
+			must(fmt.Fprintf(out, "%s", link(authorLink, truncatedAuthor)))
 		} else {
-			must(fmt.Fprintf(out, "%s%s%s", YELLOW, link(authorLink, file.author[:authorWidth]), RESET))
+			must(fmt.Fprintf(out, "%s%s%s", YELLOW, link(authorLink, truncatedAuthor), RESET))
 		}
 	} else {
 		if file.isDeleted {
-			must(fmt.Fprintf(out, "%s", file.author[:authorWidth]))
+			must(fmt.Fprintf(out, "%s", truncatedAuthor))
 		} else {
-			must(fmt.Fprintf(out, "%s%s%s", YELLOW, file.author[:authorWidth], RESET))
+			must(fmt.Fprintf(out, "%s%s%s", YELLOW, truncatedAuthor, RESET))
 		}
 	}
 
 	// pad spaces to the right up to maxWidth
-	for i := 0; i < maxWidth-authorWidth; i++ {
+	for i := 0; i < maxWidth-width(truncatedAuthor); i++ {
 		must(fmt.Fprintf(out, " "))
 	}
 }
 
 // renderEmail renders the author email column
 func renderEmail(out io.Writer, file *File, maxWidth int, rctx *RenderContext) {
-	emailWidth := min(len(file.authorEmail), maxWidth)
-	must(fmt.Fprintf(out, "%s", file.authorEmail[:emailWidth]))
+	// Calculate how many characters we can display
+	emailWidth := min(width(file.authorEmail), maxWidth)
+
+	// Truncate email string if needed
+	truncatedEmail := truncateToWidth(file.authorEmail, emailWidth)
+	must(fmt.Fprintf(out, "%s", truncatedEmail))
 
 	// pad spaces to the right up to maxWidth
-	for i := 0; i < maxWidth-emailWidth; i++ {
+	for i := 0; i < maxWidth-width(truncatedEmail); i++ {
 		must(fmt.Fprintf(out, " "))
 	}
 }
@@ -237,16 +253,18 @@ func renderEmail(out io.Writer, file *File, maxWidth int, rctx *RenderContext) {
 func renderNumstat(out io.Writer, file *File, maxWidth int, rctx *RenderContext) {
 	if file.diffSum != nil {
 		numstat := fmt.Sprintf("+%d/-%d", file.diffSum.plus, file.diffSum.minus)
-		numstatWidth := min(len(numstat), maxWidth)
-		must(fmt.Fprintf(out, "%s", numstat[:numstatWidth]))
+		numstatWidth := min(width(numstat), maxWidth)
+
+		truncatedNumstat := truncateToWidth(numstat, numstatWidth)
+		must(fmt.Fprintf(out, "%s", truncatedNumstat))
 
 		// pad spaces to the right up to maxWidth
-		for i := 0; i < maxWidth-numstatWidth; i++ {
+		for i := 0; i < maxWidth-width(truncatedNumstat); i++ {
 			must(fmt.Fprintf(out, " "))
 		}
 	} else {
 		// pad spaces if no diffSum
-		for i := 0; i < maxWidth; i++ {
+		for range maxWidth {
 			must(fmt.Fprintf(out, " "))
 		}
 	}
@@ -254,21 +272,26 @@ func renderNumstat(out io.Writer, file *File, maxWidth int, rctx *RenderContext)
 
 // renderCommitMessage renders the commit message with issue linkification
 func renderCommitMessage(out io.Writer, file *File, maxWidth int, rctx *RenderContext) {
-	messageWidth := min(len(file.message), maxWidth)
+	// Calculate how many characters we can display
+	messageWidth := min(width(file.message), maxWidth)
+
+	// Truncate message string if needed
+	truncatedMessage := truncateToWidth(file.message, messageWidth)
+
 	if file.isDeleted {
 		if len(rctx.GithubURL) > 0 {
-			must(fmt.Fprintf(out, "%s", linkify(file.message[:messageWidth], rctx.GithubURL, file.hash)))
+			must(fmt.Fprintf(out, "%s", linkify(truncatedMessage, rctx.GithubURL, file.hash)))
 		} else {
-			must(fmt.Fprintf(out, "%s", file.message[:messageWidth]))
+			must(fmt.Fprintf(out, "%s", truncatedMessage))
 		}
 	} else if len(rctx.GithubURL) > 0 {
-		must(fmt.Fprintf(out, "%s", linkify(file.message[:messageWidth], rctx.GithubURL, file.hash)))
+		must(fmt.Fprintf(out, "%s", linkify(truncatedMessage, rctx.GithubURL, file.hash)))
 	} else {
-		must(fmt.Fprintf(out, "%s", file.message[:messageWidth]))
+		must(fmt.Fprintf(out, "%s", truncatedMessage))
 	}
 
 	// pad spaces to the right up to maxWidth
-	for i := 0; i < maxWidth-messageWidth; i++ {
+	for i := 0; i < maxWidth-width(truncatedMessage); i++ {
 		must(fmt.Fprintf(out, " "))
 	}
 }

@@ -14,9 +14,11 @@ import (
 	"sync"
 	"syscall"
 	"unsafe"
+
+	"github.com/mattn/go-runewidth"
 )
 
-const VERSION = "4.2.0"
+const VERSION = "4.3.0"
 
 type Diff struct {
 	plus  int
@@ -355,32 +357,48 @@ func linkify(commitMsg string, github string, hash string) string {
 	return strings.Join(out, "")
 }
 
-const ansiMarker = '\x1b'
-
 // width returns the printable width of a string in a terminal, by ignoring
 // ansi sequences. This version assumes all characters have a width of 1, which
 // is not true in general but is true in this program. modified from:
 // https://github.com/muesli/ansi/blob/276c6243b/buffer.go#L21
 func width(s string) int {
-	var n int
-	var ansi bool
+	// Use runewidth to properly handle Unicode characters including diacritics
+	return runewidth.StringWidth(stripANSI(s))
+}
 
-	for _, c := range s {
-		if c == ansiMarker {
-			ansi = true
-		} else if ansi {
-			// @, A-Z, a-z terminate the escape
-			if (c >= 0x40 && c <= 0x5a) || (c >= 0x61 && c <= 0x7a) {
-				ansi = false
+// stripANSI removes ANSI escape codes from a string for width calculation
+func stripANSI(s string) string {
+	var result strings.Builder
+	var i int
+	for i < len(s) {
+		if i < len(s)-1 && s[i] == '\x1b' {
+			// Check for OSC sequences (hyperlinks): \x1b]8;;...\x1b\\
+			if s[i+1] == ']' {
+				// Find the ST (String Terminator): \x1b\\
+				end := strings.Index(s[i:], "\x1b\\")
+				if end != -1 {
+					i += end + 2 // Skip past the entire OSC sequence
+					continue
+				}
 			}
-		} else {
-			// Just assuming single-width characters is good enough™ in this
-			// case
-			n += 1
+			// Check for CSI sequences: \x1b[...letter
+			if s[i+1] == '[' {
+				i += 2
+				for i < len(s) {
+					// @, A-Z, a-z terminate the escape
+					if (s[i] >= 0x40 && s[i] <= 0x5a) || (s[i] >= 0x61 && s[i] <= 0x7a) {
+						i++
+						break
+					}
+					i++
+				}
+				continue
+			}
 		}
+		result.WriteByte(s[i])
+		i++
 	}
-
-	return n
+	return result.String()
 }
 
 type windowSize struct {
@@ -458,10 +476,7 @@ func showColumns(out io.Writer, maxWidth int, files []*File, rctx *RenderContext
 
 			// Calculate available width for this column
 			availableWidth := maxWidth - lineWidth
-			colWidth := colWidths[col]
-			if colWidth > availableWidth {
-				colWidth = availableWidth
-			}
+			colWidth := min(colWidths[col], availableWidth)
 
 			// Render the column
 			renderer := getColumnRenderer(col)

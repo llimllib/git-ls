@@ -2,17 +2,9 @@ package main
 
 import (
 	"bytes"
-	"regexp"
 	"strings"
 	"testing"
 )
-
-// stripANSI removes ANSI escape codes from a string
-func stripANSI(s string) string {
-	// Remove color codes, hyperlinks, and other ANSI sequences
-	ansiRegex := regexp.MustCompile(`\x1b\[[0-9;]*[a-zA-Z]|\x1b\]8;;[^\x1b]*\x1b\\`)
-	return ansiRegex.ReplaceAllString(s, "")
-}
 
 // TestRenderDiffMaxWidth tests that renderDiff respects maxWidth exactly
 func TestRenderDiffMaxWidth(t *testing.T) {
@@ -232,5 +224,47 @@ func TestCalculateColumnWidths(t *testing.T) {
 		if widths[col] != expected {
 			t.Errorf("Column %s width = %d, want %d", col, widths[col], expected)
 		}
+	}
+}
+
+// TestCalculateColumnWidthsWithDiacritics tests that diacritics are handled correctly
+func TestCalculateColumnWidthsWithDiacritics(t *testing.T) {
+	files := []*File{
+		{
+			entry:        &mockDirEntry{name: "file1.go"},
+			status:       "M ",
+			diffStat:     "+++",
+			shortHash:    "abc123",
+			hash:         "abc123def456789",
+			lastModified: "2024-01-01",
+			author:       "Pål Grønås Drange", // 17 characters, but visually 17 columns
+			authorEmail:  "pal@example.com",
+			message:      "Add café support", // 16 characters with é
+		},
+		{
+			entry:        &mockDirEntry{name: "file2.go"},
+			status:       "A ",
+			diffStat:     "++++",
+			shortHash:    "def456",
+			hash:         "def456abc123xyz",
+			lastModified: "2024-12-31",
+			author:       "Miro Hrončok", // 12 characters with č
+			authorEmail:  "miro@example.com",
+			message:      "Fix naïve algorithm", // 19 characters with ï
+		},
+	}
+
+	columns := []Column{ColAuthor, ColCommitMessage}
+	widths := calculateColumnWidths(files, columns)
+
+	// The author column should use the visual width (all characters are single-width)
+	// "Pål Grønås Drange" is 17 characters and 17 visual columns
+	if widths[ColAuthor] != 17 {
+		t.Errorf("Author column width = %d, want 17 for 'Pål Grønås Drange'", widths[ColAuthor])
+	}
+
+	// "Fix naïve algorithm" is 19 characters and 19 visual columns
+	if widths[ColCommitMessage] != 19 {
+		t.Errorf("Message column width = %d, want 19 for 'Fix naïve algorithm'", widths[ColCommitMessage])
 	}
 }
