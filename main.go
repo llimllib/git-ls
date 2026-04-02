@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"fmt"
 	"io"
 	"log"
@@ -19,6 +20,11 @@ import (
 )
 
 const VERSION = "4.4.0"
+
+// HistoryLimit is the maximum number of commits to review; we'll exit if we
+// find all files before it; if a file was more than this many commits ago we
+// won't print its info
+const HistoryLimit = "50000"
 
 type Diff struct {
 	plus  int
@@ -279,7 +285,11 @@ func main() {
 
 	curdir := must(filepath.Rel(gitData.root, must(filepath.Abs("."))))
 	fileStatus(gitData.status, files, curdir)
-	parseGitLogParallel(files)
+	if err := parseGitLogStreaming(files); err != nil {
+		log.Printf("Warning: git log streaming failed: %v", err)
+		// Fallback to parallel approach if streaming fails
+		parseGitLogParallel(files)
+	}
 	parseDiffStat(gitData.diffStat, files)
 
 	// generate a diffStat graph for every file
@@ -603,10 +613,141 @@ type gitLogResult struct {
 	output []byte
 }
 
+// parseGitLogStreaming runs a single git log command and streams the output,
+// stopping as soon as all files are found. This is much faster than spawning
+// N processes because:
+// 1. Single process (no spawn overhead)
+// 2. Early exit (stops when all files found)
+// 3. Walks history once (all files benefit from git's caching)
+// 4. Directory scoped (only checks current directory)
+func parseGitLogStreaming(files []*File) error {
+	if len(files) == 0 {
+		return nil
+	}
+
+	// Build map of files we need to find
+	filesNeeded := make(map[string]*File)
+	for _, f := range files {
+		filesNeeded[f.Name()] = f
+	}
+
+	// Start git log with streaming output
+	// -- .: limit to current directory (faster)
+	cmd := exec.Command("git", "-c", "core.fsmonitor=false", "log",
+		"--name-only",
+		"--date=format:%Y-%m-%d",
+		"--format=%H%x00%h%x00%ad%x00%aN%x00%aE%x00%s%x00",
+		"-n", HistoryLimit,
+		"HEAD", "--", ".")
+
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		return err
+	}
+
+	if err := cmd.Start(); err != nil {
+		return err
+	}
+
+	scanner := bufio.NewScanner(stdout)
+	var currentCommit struct {
+		hash        string
+		shortHash   string
+		date        string
+		author      string
+		authorEmail string
+		message     string
+	}
+
+	// Track commits since last find for early exit
+	commitsSinceLastFind := 0
+	const giveUpAfter = 5000 // If no new files found in 5000 commits, stop
+
+	for scanner.Scan() {
+		commitsSinceLastFind++
+		line := scanner.Text()
+
+		if len(line) == 0 {
+			continue // Skip blank lines
+		}
+
+		// Check if this is a commit metadata line (contains null bytes)
+		if strings.Contains(line, "\x00") {
+			parts := strings.Split(line, "\x00")
+			if len(parts) >= 6 {
+				currentCommit.hash = parts[0]
+				currentCommit.shortHash = parts[1]
+				currentCommit.date = parts[2]
+				currentCommit.author = parts[3]
+				currentCommit.authorEmail = parts[4]
+				currentCommit.message = parts[5]
+			}
+		} else if currentCommit.hash != "" {
+			// This is a filename line
+			filename := strings.TrimSpace(line)
+
+			// Extract the first component (for directories)
+			// e.g., "builtin/add.c" -> "builtin", "main.go" -> "main.go"
+			firstPart := first(filename)
+
+			// Check if this is a file/dir we're looking for
+			if file, needed := filesNeeded[firstPart]; needed {
+				// Found it! Populate the file info
+				file.hash = currentCommit.hash
+				file.shortHash = currentCommit.shortHash
+				file.lastModified = currentCommit.date
+				file.author = currentCommit.author
+				file.authorEmail = currentCommit.authorEmail
+				file.message = currentCommit.message
+
+				// Remove from needed set
+				delete(filesNeeded, firstPart)
+				commitsSinceLastFind = 0 // Reset counter
+
+				// If we found all files, we can stop!
+				if len(filesNeeded) == 0 {
+					// Kill the git process - we're done
+					_ = cmd.Process.Kill()
+					// Drain remaining output to avoid broken pipe errors
+					go func() {
+						for scanner.Scan() {
+						}
+					}()
+					return nil
+				}
+			}
+
+			// Early exit if we haven't found new files in a while
+			if commitsSinceLastFind > giveUpAfter {
+				_ = cmd.Process.Kill()
+				go func() {
+					for scanner.Scan() {
+					}
+				}()
+				return nil
+			}
+		}
+	}
+
+	if err := scanner.Err(); err != nil {
+		// If we killed the process, we might get an error - that's fine if we found everything
+		if len(filesNeeded) == 0 {
+			return nil
+		}
+		return err
+	}
+
+	// Wait for process to finish
+	_ = cmd.Wait()
+
+	// If some files weren't found, that's okay - they might be very old
+	// or not in git history. They'll just have empty commit info.
+
+	return nil
+}
+
 // parseGitLogParallel runs git log -1 for each file in parallel and parses
-// the results. This is faster than sequential calls due to parallelism, and
-// faster than a single `git log -- .` because -1 limits to finding just one
-// commit per file rather than traversing entire history.
+// the results. This is used for deleted files where we need individual lookups.
 func parseGitLogParallel(files []*File) {
 	results := make(chan gitLogResult, len(files))
 
