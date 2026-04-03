@@ -3,6 +3,8 @@ package main
 import (
 	"fmt"
 	"os"
+	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -395,4 +397,166 @@ func TestLinkify(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestWorktreeWithSymlink tests that git-ls works correctly in a worktree
+// accessed via symlink. This is a regression test for issue #34.
+func TestWorktreeWithSymlink(t *testing.T) {
+	// Create a temporary directory for our test
+	tmpDir := t.TempDir()
+
+	// Create a git repo with one commit
+	repoDir := tmpDir + "/repo"
+	if err := os.Mkdir(repoDir, 0755); err != nil {
+		t.Fatalf("Failed to create repo dir: %v", err)
+	}
+
+	// Initialize git repo
+	if err := runCmd(repoDir, "git", "init", "-b", "main"); err != nil {
+		t.Fatalf("Failed to init repo: %v", err)
+	}
+
+	// Create and commit a file
+	if err := os.WriteFile(repoDir+"/file1.txt", []byte("hello"), 0644); err != nil {
+		t.Fatalf("Failed to write file: %v", err)
+	}
+	if err := runCmd(repoDir, "git", "add", "file1.txt"); err != nil {
+		t.Fatalf("Failed to add file: %v", err)
+	}
+	if err := runCmd(repoDir, "git", "commit", "-m", "initial commit"); err != nil {
+		t.Fatalf("Failed to commit: %v", err)
+	}
+
+	// Create a worktree
+	wtDir := tmpDir + "/worktree"
+	if err := runCmd(repoDir, "git", "worktree", "add", wtDir, "-b", "wt-branch"); err != nil {
+		t.Fatalf("Failed to create worktree: %v", err)
+	}
+
+	// Add an untracked file in the worktree
+	if err := os.WriteFile(wtDir+"/rootfile.txt", []byte("untracked"), 0644); err != nil {
+		t.Fatalf("Failed to write untracked file: %v", err)
+	}
+
+	// Create a symlink to the worktree
+	linkDir := tmpDir + "/link-to-wt"
+	if err := os.Symlink(wtDir, linkDir); err != nil {
+		t.Fatalf("Failed to create symlink: %v", err)
+	}
+
+	// Test case 1: Run from real worktree
+	t.Run("real worktree", func(t *testing.T) {
+		// Change to the real worktree directory
+		oldDir, _ := os.Getwd()
+		defer func() {
+			if err := os.Chdir(oldDir); err != nil {
+				t.Logf("Failed to restore directory: %v", err)
+			}
+		}()
+
+		if err := os.Chdir(wtDir); err != nil {
+			t.Fatalf("Failed to chdir to worktree: %v", err)
+		}
+
+		// This should not panic
+		// We're testing the internal functions that were panicking
+		gitData := fetchGitData()
+		curdir, err := filepath.Rel(gitData.root, must(filepath.Abs(".")))
+		if err != nil {
+			t.Fatalf("Failed to get curdir: %v", err)
+		}
+
+		osfiles, err := os.ReadDir(".")
+		if err != nil {
+			t.Fatalf("Failed to read directory: %v", err)
+		}
+
+		var files []*File
+		for _, file := range osfiles {
+			stat, _ := os.Stat(file.Name())
+			files = append(files, &File{
+				entry: file,
+				isDir: file.IsDir(),
+				isExe: !file.IsDir() && stat.Mode()&0o111 != 0,
+			})
+		}
+
+		// This was panicking before the fix
+		fileStatus(gitData.status, files, curdir)
+
+		// Verify we found the untracked file
+		found := false
+		for _, f := range files {
+			if f.Name() == "rootfile.txt" {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Error("Expected to find rootfile.txt in file list")
+		}
+	})
+
+	// Test case 2: Run from symlink to worktree
+	t.Run("symlink to worktree", func(t *testing.T) {
+		// Change to the symlink directory
+		oldDir, _ := os.Getwd()
+		defer func() {
+			if err := os.Chdir(oldDir); err != nil {
+				t.Logf("Failed to restore directory: %v", err)
+			}
+		}()
+
+		if err := os.Chdir(linkDir); err != nil {
+			t.Fatalf("Failed to chdir to symlink: %v", err)
+		}
+
+		// This should not panic
+		gitData := fetchGitData()
+		curdir, err := filepath.Rel(gitData.root, must(filepath.Abs(".")))
+		if err != nil {
+			t.Fatalf("Failed to get curdir: %v", err)
+		}
+
+		osfiles, err := os.ReadDir(".")
+		if err != nil {
+			t.Fatalf("Failed to read directory: %v", err)
+		}
+
+		var files []*File
+		for _, file := range osfiles {
+			stat, _ := os.Stat(file.Name())
+			files = append(files, &File{
+				entry: file,
+				isDir: file.IsDir(),
+				isExe: !file.IsDir() && stat.Mode()&0o111 != 0,
+			})
+		}
+
+		// This was panicking before the fix
+		fileStatus(gitData.status, files, curdir)
+
+		// Verify we found the untracked file
+		found := false
+		for _, f := range files {
+			if f.Name() == "rootfile.txt" {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Error("Expected to find rootfile.txt in file list")
+		}
+	})
+}
+
+// runCmd is a helper to run a command in a specific directory
+func runCmd(dir string, name string, args ...string) error {
+	cmd := exec.Command(name, args...)
+	cmd.Dir = dir
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("%w: %s", err, string(out))
+	}
+	return nil
 }
