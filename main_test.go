@@ -416,6 +416,14 @@ func TestWorktreeWithSymlink(t *testing.T) {
 		t.Fatalf("Failed to init repo: %v", err)
 	}
 
+	// Configure git user for this test repo
+	if err := runCmd(repoDir, "git", "config", "user.email", "test@example.com"); err != nil {
+		t.Fatalf("Failed to set git email: %v", err)
+	}
+	if err := runCmd(repoDir, "git", "config", "user.name", "Test User"); err != nil {
+		t.Fatalf("Failed to set git name: %v", err)
+	}
+
 	// Create and commit a file
 	if err := os.WriteFile(repoDir+"/file1.txt", []byte("hello"), 0644); err != nil {
 		t.Fatalf("Failed to write file: %v", err)
