@@ -19,7 +19,7 @@ import (
 	"github.com/mattn/go-runewidth"
 )
 
-const VERSION = "5.1.0"
+const VERSION = "5.2.0"
 
 // HistoryLimit is the maximum number of commits to review; we'll exit if we
 // find all files before it; if a file was more than this many commits ago we
