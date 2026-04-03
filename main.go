@@ -129,39 +129,61 @@ type gitResults struct {
 	diffStat      []byte
 	currentBranch string
 	remotes       []byte
+	isEmpty       bool // true if repo has no commits yet
+}
+
+// isEmptyRepo checks if the repository has no commits yet by verifying if HEAD
+// exists. If it doesn't, this could mean:
+//
+//  1. We're in an empty repo (no commits yet) - the case we care about
+//
+//  2. We're not in a git repo at all - this will be caught by gitRoot() or
+//     gitStatus()
+//
+// We check exit code 128 (git's fatal error code) because it's the best signal
+// I found for "empty repository"
+func isEmptyRepo() bool {
+	cmd := exec.Command("git", "-c", "core.fsmonitor=false", "rev-parse", "--verify", "HEAD")
+	err := cmd.Run()
+	if err != nil {
+		if exitErr, ok := err.(*exec.ExitError); ok {
+			return exitErr.ExitCode() == 128
+		}
+	}
+	return false
 }
 
 // fetchGitData runs all independent git commands in parallel and returns the results
 func fetchGitData() *gitResults {
 	results := &gitResults{}
+
 	var wg sync.WaitGroup
 
-	wg.Add(5)
-
-	go func() {
-		defer wg.Done()
+	wg.Go(func() {
 		results.root = gitRoot()
-	}()
+	})
 
-	go func() {
-		defer wg.Done()
+	wg.Go(func() {
 		results.status = gitStatus()
-	}()
+	})
 
-	go func() {
-		defer wg.Done()
-		results.diffStat = gitDiffStat()
-	}()
+	wg.Go(func() {
+		results.currentBranch = gitCurrentBranchSymbolic()
+	})
 
-	go func() {
-		defer wg.Done()
-		results.currentBranch = gitCurrentBranch()
-	}()
-
-	go func() {
-		defer wg.Done()
+	wg.Go(func() {
 		results.remotes = gitRemotes()
-	}()
+	})
+
+	// No diff stats in empty repo
+	if isEmptyRepo() {
+		results.isEmpty = true
+		results.diffStat = []byte{}
+	} else {
+		wg.Go(func() {
+			results.diffStat = gitDiffStat()
+		})
+	}
 
 	wg.Wait()
 	return results
@@ -528,11 +550,13 @@ func isGithub(out []byte) string {
 	return ""
 }
 
-func gitCurrentBranch() string {
-	cmd := exec.Command("git", "-c", "core.fsmonitor=false", "rev-parse", "--abbrev-ref", "HEAD")
+// gitCurrentBranchSymbolic gets the current branch name using symbolic-ref.
+// This works in empty repos (no commits) where rev-parse would fail.
+func gitCurrentBranchSymbolic() string {
+	cmd := exec.Command("git", "-c", "core.fsmonitor=false", "symbolic-ref", "--short", "HEAD")
 	out, err := cmd.Output()
 	if err != nil {
-		log.Fatalf("Failed to get git status: %v", err)
+		log.Fatalf("Failed to get current branch: %v", err)
 	}
 	return strings.TrimSpace(string(out))
 }
@@ -813,6 +837,11 @@ func gitDiffStat() []byte {
 	cmd := exec.Command("git", "-c", "core.fsmonitor=false", "diff", "--numstat", "--relative", "HEAD")
 	output, err := cmd.Output()
 	if err != nil {
+		// If HEAD doesn't exist (empty repo with no commits), return empty result
+		// rather than crashing. Exit code 128 is git's "fatal error" code.
+		if exitErr, ok := err.(*exec.ExitError); ok && exitErr.ExitCode() == 128 {
+			return []byte{}
+		}
 		log.Fatalf("Diffstat error: %v", err)
 	}
 	return output

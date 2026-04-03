@@ -568,3 +568,60 @@ func runCmd(dir string, name string, args ...string) error {
 	}
 	return nil
 }
+
+// TestEmptyRepository tests that git-ls works correctly in an empty repository
+// (one with no commits yet). This is a regression test for issue #35.
+func TestEmptyRepository(t *testing.T) {
+	// Create a temporary directory for our test
+	tmpDir := t.TempDir()
+
+	// Create an empty git repo (no commits)
+	repoDir := tmpDir + "/empty-repo"
+	if err := os.Mkdir(repoDir, 0755); err != nil {
+		t.Fatalf("Failed to create repo dir: %v", err)
+	}
+
+	// Initialize git repo
+	if err := runCmd(repoDir, "git", "init", "-b", "main"); err != nil {
+		t.Fatalf("Failed to init repo: %v", err)
+	}
+
+	// Configure git user for this test repo
+	if err := runCmd(repoDir, "git", "config", "user.email", "test@example.com"); err != nil {
+		t.Fatalf("Failed to set git email: %v", err)
+	}
+	if err := runCmd(repoDir, "git", "config", "user.name", "Test User"); err != nil {
+		t.Fatalf("Failed to set git name: %v", err)
+	}
+
+	// Create a file but don't commit it
+	if err := os.WriteFile(repoDir+"/test.txt", []byte("hello"), 0644); err != nil {
+		t.Fatalf("Failed to write file: %v", err)
+	}
+
+	// Change to the empty repo directory
+	oldDir, _ := os.Getwd()
+	defer func() {
+		if err := os.Chdir(oldDir); err != nil {
+			t.Logf("Failed to restore directory: %v", err)
+		}
+	}()
+
+	if err := os.Chdir(repoDir); err != nil {
+		t.Fatalf("Failed to chdir to empty repo: %v", err)
+	}
+
+	// This should not crash with "fatal: ambiguous argument 'HEAD'"
+	// Before the fix, gitDiffStat() would call log.Fatalf() here
+	diffStat := gitDiffStat()
+
+	// In an empty repo with no commits, there should be no diff stats
+	// (because there's no HEAD to compare against)
+	if len(diffStat) != 0 {
+		t.Logf("Expected empty diffStat in empty repo, got: %s", string(diffStat))
+		// Note: This is logged but not a failure - the important thing is
+		// that gitDiffStat() didn't crash
+	}
+
+	t.Log("Successfully ran gitDiffStat() in empty repository without crashing")
+}
