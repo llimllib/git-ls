@@ -662,8 +662,10 @@ func parseGitLogStreaming(files []*File) error {
 
 	// Start git log with streaming output
 	// -- .: limit to current directory (faster)
+	// --relative: make paths relative to current directory
 	cmd := exec.Command("git", "-c", "core.fsmonitor=false", "log",
 		"--name-only",
+		"--relative",
 		"--date=format:%Y-%m-%d",
 		"--format=%H%x00%h%x00%ad%x00%aN%x00%aE%x00%s%x00",
 		"-n", HistoryLimit,
