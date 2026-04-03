@@ -569,6 +569,119 @@ func runCmd(dir string, name string, args ...string) error {
 	return nil
 }
 
+// TestSubdirectoryGitInfo tests that git-ls shows git information for files
+// when run on a subdirectory. This is a regression test for a bug where
+// parseGitLogStreaming wasn't using --relative, causing paths from git log
+// to not match the files we were looking for.
+func TestSubdirectoryGitInfo(t *testing.T) {
+	// Create a temporary directory for our test
+	tmpDir := t.TempDir()
+
+	// Create a git repo
+	repoDir := tmpDir + "/repo"
+	if err := os.Mkdir(repoDir, 0755); err != nil {
+		t.Fatalf("Failed to create repo dir: %v", err)
+	}
+
+	// Initialize git repo
+	if err := runCmd(repoDir, "git", "init", "-b", "main"); err != nil {
+		t.Fatalf("Failed to init repo: %v", err)
+	}
+
+	// Configure git user for this test repo
+	if err := runCmd(repoDir, "git", "config", "user.email", "test@example.com"); err != nil {
+		t.Fatalf("Failed to set git email: %v", err)
+	}
+	if err := runCmd(repoDir, "git", "config", "user.name", "Test User"); err != nil {
+		t.Fatalf("Failed to set git name: %v", err)
+	}
+
+	// Create a subdirectory with a file
+	subDir := repoDir + "/docs"
+	if err := os.Mkdir(subDir, 0755); err != nil {
+		t.Fatalf("Failed to create subdir: %v", err)
+	}
+	if err := os.WriteFile(subDir+"/README.md", []byte("# Documentation"), 0644); err != nil {
+		t.Fatalf("Failed to write file: %v", err)
+	}
+
+	// Commit the file
+	if err := runCmd(repoDir, "git", "add", "docs/README.md"); err != nil {
+		t.Fatalf("Failed to add file: %v", err)
+	}
+	if err := runCmd(repoDir, "git", "commit", "-m", "Add documentation"); err != nil {
+		t.Fatalf("Failed to commit: %v", err)
+	}
+
+	// Change to the subdirectory (simulating: git-ls docs)
+	oldDir, _ := os.Getwd()
+	defer func() {
+		if err := os.Chdir(oldDir); err != nil {
+			t.Logf("Failed to restore directory: %v", err)
+		}
+	}()
+
+	if err := os.Chdir(subDir); err != nil {
+		t.Fatalf("Failed to chdir to subdirectory: %v", err)
+	}
+
+	// Read the files in the subdirectory
+	osfiles, err := os.ReadDir(".")
+	if err != nil {
+		t.Fatalf("Failed to read directory: %v", err)
+	}
+
+	var files []*File
+	for _, file := range osfiles {
+		stat, _ := os.Stat(file.Name())
+		files = append(files, &File{
+			entry: file,
+			isDir: file.IsDir(),
+			isExe: !file.IsDir() && stat.Mode()&0o111 != 0,
+		})
+	}
+
+	// Run parseGitLogStreaming to get git info
+	if err := parseGitLogStreaming(files); err != nil {
+		t.Fatalf("parseGitLogStreaming failed: %v", err)
+	}
+
+	// Verify that README.md has git info populated
+	var readme *File
+	for _, f := range files {
+		if f.Name() == "README.md" {
+			readme = f
+			break
+		}
+	}
+
+	if readme == nil {
+		t.Fatal("README.md not found in file list")
+	}
+
+	// Check that git info was populated
+	if readme.hash == "" {
+		t.Error("Expected README.md to have a commit hash, but it was empty")
+	}
+	if readme.author == "" {
+		t.Error("Expected README.md to have an author, but it was empty")
+	}
+	if readme.message == "" {
+		t.Error("Expected README.md to have a commit message, but it was empty")
+	}
+	if readme.lastModified == "" {
+		t.Error("Expected README.md to have a last modified date, but it was empty")
+	}
+
+	// Verify the values are correct
+	if readme.author != "Test User" {
+		t.Errorf("Expected author 'Test User', got %q", readme.author)
+	}
+	if readme.message != "Add documentation" {
+		t.Errorf("Expected message 'Add documentation', got %q", readme.message)
+	}
+}
+
 // TestEmptyRepository tests that git-ls works correctly in an empty repository
 // (one with no commits yet). This is a regression test for issue #35.
 func TestEmptyRepository(t *testing.T) {
