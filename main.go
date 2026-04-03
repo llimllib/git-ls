@@ -283,7 +283,12 @@ func main() {
 	// Fetch all git data in parallel
 	gitData := fetchGitData()
 
-	curdir := must(filepath.Rel(gitData.root, must(filepath.Abs("."))))
+	// Resolve symlinks to match git's perspective. Git internally resolves
+	// symlinks when working with worktrees, so we need to do the same to
+	// ensure filepath.Rel() works correctly in fileStatus().
+	// https://github.com/llimllib/git-ls/issues/34
+	resolved := must(filepath.EvalSymlinks(must(filepath.Abs("."))))
+	curdir := must(filepath.Rel(gitData.root, resolved))
 	fileStatus(gitData.status, files, curdir)
 	if err := parseGitLogStreaming(files); err != nil {
 		log.Printf("Warning: git log streaming failed: %v", err)
