@@ -479,7 +479,7 @@ func makeDiffGraph(file *File, width int) string {
 			GREEN,
 			strings.Repeat("+", plus),
 			RED,
-			strings.Repeat("-", plus),
+			strings.Repeat("-", minus),
 			RESET)
 	}
 	return fmt.Sprintf("%s%s%s%s%s",

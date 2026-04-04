@@ -10,6 +10,61 @@ import (
 	"time"
 )
 
+func TestMakeDiffGraph(t *testing.T) {
+	tests := []struct {
+		name     string
+		file     *File
+		width    int
+		expected string
+	}{
+		{
+			name:     "nil diffSum",
+			file:     &File{},
+			width:    4,
+			expected: "",
+		},
+		{
+			name:     "only additions",
+			file:     &File{diffSum: &Diff{plus: 3, minus: 0}},
+			width:    4,
+			expected: GREEN + "+++" + RED + "" + RESET,
+		},
+		{
+			name:     "only deletions",
+			file:     &File{diffSum: &Diff{plus: 0, minus: 2}},
+			width:    4,
+			expected: GREEN + "" + RED + "--" + RESET,
+		},
+		{
+			name:     "additions and deletions within width",
+			file:     &File{diffSum: &Diff{plus: 2, minus: 2}},
+			width:    4,
+			expected: GREEN + "++" + RED + "--" + RESET,
+		},
+		{
+			name:     "additions and deletions exceeding width are scaled",
+			file:     &File{diffSum: &Diff{plus: 10, minus: 10}},
+			width:    4,
+			expected: GREEN + "++" + RED + "--" + RESET,
+		},
+		{
+			name:     "new file with 4 additions fits in width 4",
+			file:     &File{diffSum: &Diff{plus: 4, minus: 0}},
+			width:    4,
+			expected: GREEN + "++++" + RED + "" + RESET,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := makeDiffGraph(tt.file, tt.width)
+			if result != tt.expected {
+				t.Errorf("makeDiffGraph() = %q, expected %q", result, tt.expected)
+			}
+		})
+	}
+}
+
 func TestIsGithub(t *testing.T) {
 	tests := []struct {
 		name     string
