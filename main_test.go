@@ -125,11 +125,12 @@ func (m *mockDirEntry) Info() (os.FileInfo, error) {
 
 func TestFileStatus(t *testing.T) {
 	tests := []struct {
-		name     string
-		status   string
-		files    []*File
-		dir      string
-		expected []string
+		name            string
+		status          string
+		files           []*File
+		dir             string
+		expected        []string
+		expectedOldName []string // expected oldName per file (empty string = not set)
 	}{
 		{
 			name:     "empty status and files",
@@ -177,6 +178,22 @@ func TestFileStatus(t *testing.T) {
 			dir:      "homedir/",
 			expected: []string{"M "},
 		},
+		{
+			name:            "rename maps status to new filename",
+			status:          "R  old-name.txt -> new-name.txt",
+			files:           []*File{{entry: &mockDirEntry{name: "new-name.txt"}}},
+			expected:        []string{"R "},
+			expectedOldName: []string{"old-name.txt"},
+			dir:             "",
+		},
+		{
+			name:            "copy maps status to new filename",
+			status:          "C  source.txt -> copy.txt",
+			files:           []*File{{entry: &mockDirEntry{name: "copy.txt"}}},
+			expected:        []string{"C "},
+			expectedOldName: []string{"source.txt"},
+			dir:             "",
+		},
 	}
 
 	for _, tt := range tests {
@@ -184,7 +201,12 @@ func TestFileStatus(t *testing.T) {
 			fileStatus([]byte(tt.status), tt.files, tt.dir)
 			for i, f := range tt.files {
 				if f.status != tt.expected[i] {
-					t.Errorf("expected %s for %s, got %s", tt.expected[i], f.entry.Name(), f.status)
+					t.Errorf("expected status %q for %s, got %q", tt.expected[i], f.entry.Name(), f.status)
+				}
+				if tt.expectedOldName != nil {
+					if f.oldName != tt.expectedOldName[i] {
+						t.Errorf("expected oldName %q for %s, got %q", tt.expectedOldName[i], f.entry.Name(), f.oldName)
+					}
 				}
 			}
 		})
@@ -792,4 +814,117 @@ func TestEmptyRepository(t *testing.T) {
 	}
 
 	t.Log("Successfully ran gitDiffStat() in empty repository without crashing")
+}
+
+// TestRenamedFileGitInfo tests that renamed files show the commit info from
+// the file's previous name. This is a regression test for a bug where renamed
+// files had no git log info because git log couldn't find history under the
+// new name.
+func TestRenamedFileGitInfo(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	repoDir := tmpDir + "/repo"
+	if err := os.Mkdir(repoDir, 0755); err != nil {
+		t.Fatalf("Failed to create repo dir: %v", err)
+	}
+
+	if err := runCmd(repoDir, "git", "init", "-b", "main"); err != nil {
+		t.Fatalf("Failed to init repo: %v", err)
+	}
+	if err := runCmd(repoDir, "git", "config", "user.email", "test@example.com"); err != nil {
+		t.Fatalf("Failed to set git email: %v", err)
+	}
+	if err := runCmd(repoDir, "git", "config", "user.name", "Test User"); err != nil {
+		t.Fatalf("Failed to set git name: %v", err)
+	}
+
+	// Create and commit a file
+	if err := os.WriteFile(repoDir+"/old-name.txt", []byte("hello world\n"), 0644); err != nil {
+		t.Fatalf("Failed to write file: %v", err)
+	}
+	if err := runCmd(repoDir, "git", "add", "old-name.txt"); err != nil {
+		t.Fatalf("Failed to add file: %v", err)
+	}
+	if err := runCmd(repoDir, "git", "commit", "-m", "initial commit"); err != nil {
+		t.Fatalf("Failed to commit: %v", err)
+	}
+
+	// Rename the file and stage it
+	if err := runCmd(repoDir, "git", "mv", "old-name.txt", "new-name.txt"); err != nil {
+		t.Fatalf("Failed to rename file: %v", err)
+	}
+
+	// Change to the repo directory
+	oldDir, _ := os.Getwd()
+	defer func() {
+		if err := os.Chdir(oldDir); err != nil {
+			t.Logf("Failed to restore directory: %v", err)
+		}
+	}()
+
+	if err := os.Chdir(repoDir); err != nil {
+		t.Fatalf("Failed to chdir: %v", err)
+	}
+
+	osfiles, err := os.ReadDir(".")
+	if err != nil {
+		t.Fatalf("Failed to read directory: %v", err)
+	}
+
+	var files []*File
+	for _, file := range osfiles {
+		stat, _ := os.Stat(file.Name())
+		files = append(files, &File{
+			entry: file,
+			isDir: file.IsDir(),
+			isExe: !file.IsDir() && stat.Mode()&0o111 != 0,
+		})
+	}
+
+	gitData := fetchGitData()
+	resolved := must(filepath.EvalSymlinks(must(filepath.Abs("."))))
+	curdir := must(filepath.Rel(gitData.root, resolved))
+	fileStatus(gitData.status, files, curdir)
+
+	// Run the streaming log — should find renamed files via their old name
+	if err := parseGitLogStreaming(files); err != nil {
+		t.Fatalf("parseGitLogStreaming failed: %v", err)
+	}
+
+	// Find new-name.txt
+	var renamed *File
+	for _, f := range files {
+		if f.Name() == "new-name.txt" {
+			renamed = f
+			break
+		}
+	}
+
+	if renamed == nil {
+		t.Fatal("new-name.txt not found in file list")
+	}
+
+	// Verify status
+	if renamed.status == "" {
+		t.Error("Expected new-name.txt to have a rename status, but it was empty")
+	}
+	if renamed.status[0] != 'R' {
+		t.Errorf("Expected rename status starting with 'R', got %q", renamed.status)
+	}
+
+	// Verify oldName was recorded
+	if renamed.oldName != "old-name.txt" {
+		t.Errorf("Expected oldName 'old-name.txt', got %q", renamed.oldName)
+	}
+
+	// Verify commit info was found via the old name
+	if renamed.hash == "" {
+		t.Error("Expected new-name.txt to have a commit hash from its old name, but it was empty")
+	}
+	if renamed.author != "Test User" {
+		t.Errorf("Expected author 'Test User', got %q", renamed.author)
+	}
+	if renamed.message != "initial commit" {
+		t.Errorf("Expected message 'initial commit', got %q", renamed.message)
+	}
 }
