@@ -207,7 +207,8 @@ func TestCalculateColumnWidths(t *testing.T) {
 	}
 
 	columns := []Column{ColStatus, ColDiff, ColFilename, ColShorthash, ColDate, ColAuthor, ColCommitMessage}
-	widths := calculateColumnWidths(files, columns)
+	rctx := &RenderContext{}
+	widths := calculateColumnWidths(files, columns, rctx)
 
 	// Verify widths match the longest content in each column
 	expectedWidths := map[Column]int{
@@ -224,6 +225,190 @@ func TestCalculateColumnWidths(t *testing.T) {
 		if widths[col] != expected {
 			t.Errorf("Column %s width = %d, want %d", col, widths[col], expected)
 		}
+	}
+}
+
+// TestStatusToNerdFont tests the nerdfont status mapping.
+// The index (staged) character is green, the worktree (unstaged) character is red.
+func TestStatusToNerdFont(t *testing.T) {
+	greenIcon := func(icon string) string { return GREEN + icon + RESET }
+	redIcon := func(icon string) string { return RED + icon + RESET }
+
+	pencil := "\uf040"
+	diffAdded := "\uf471"
+	trash := "\uf014"
+	rename := "\uf064"
+	copy := "\uf0c5"
+	bolt := "\uf0e7"
+	question := "\uf128"
+
+	tests := []struct {
+		name     string
+		status   string
+		expected string
+	}{
+		{name: "empty status", status: "", expected: ""},
+		{name: "staged modification", status: "M ", expected: greenIcon(pencil) + " "},
+		{name: "unstaged modification", status: " M", expected: redIcon(pencil) + " "},
+		{name: "both modified", status: "MM", expected: greenIcon(pencil) + " " + redIcon(pencil) + " "},
+		{name: "staged addition", status: "A ", expected: greenIcon(diffAdded) + " "},
+		{name: "added then modified", status: "AM", expected: greenIcon(diffAdded) + " " + redIcon(pencil) + " "},
+		{name: "staged deletion", status: "D ", expected: greenIcon(trash) + " "},
+		{name: "unstaged deletion", status: " D", expected: redIcon(trash) + " "},
+		{name: "untracked", status: "??", expected: question + " "},
+		{name: "ignored", status: "I", expected: "\uf070 "},
+		{name: "renamed", status: "R ", expected: greenIcon(rename) + " "},
+		{name: "renamed then modified", status: "RM", expected: greenIcon(rename) + " " + redIcon(pencil) + " "},
+		{name: "copied", status: "C ", expected: greenIcon(copy) + " "},
+		{name: "unmerged both modified", status: "UU", expected: bolt + " "},
+		{name: "unmerged both added", status: "AA", expected: bolt + " "},
+		{name: ".git directory", status: "*", expected: "\ue5fb "},
+		{name: "unknown status falls back", status: "ZZ", expected: "ZZ"},
+		{
+			name:     "compound status",
+			status:   "M , D",
+			expected: greenIcon(pencil) + " " + redIcon(trash) + " ",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := statusToNerdFont(tt.status)
+			if result != tt.expected {
+				t.Errorf("statusToNerdFont(%q) = %q, want %q", tt.status, result, tt.expected)
+			}
+		})
+	}
+}
+
+// TestStagedVsUnstagedDistinct verifies that staged and unstaged versions of
+// the same action produce different output (different colors).
+func TestStagedVsUnstagedDistinct(t *testing.T) {
+	pairs := []struct{ staged, unstaged string }{
+		{"M ", " M"},
+		{"D ", " D"},
+	}
+	for _, p := range pairs {
+		stagedResult := statusToNerdFont(p.staged)
+		unstagedResult := statusToNerdFont(p.unstaged)
+		if stagedResult == unstagedResult {
+			t.Errorf("staged %q and unstaged %q should produce different output, both got %q",
+				p.staged, p.unstaged, stagedResult)
+		}
+	}
+}
+
+// TestRenderStatusNerdFont tests that renderStatus uses nerdfont icons when enabled
+func TestRenderStatusNerdFont(t *testing.T) {
+	tests := []struct {
+		name     string
+		status   string
+		nerdFont bool
+		maxWidth int
+	}{
+		{
+			name:     "nerdfont off shows raw status",
+			status:   "M ",
+			nerdFont: false,
+			maxWidth: 4,
+		},
+		{
+			name:     "nerdfont on shows icon",
+			status:   "M ",
+			nerdFont: true,
+			maxWidth: 4,
+		},
+		{
+			name:     "nerdfont untracked",
+			status:   "??",
+			nerdFont: true,
+			maxWidth: 4,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			file := &File{status: tt.status}
+			var buf bytes.Buffer
+			rctx := &RenderContext{NerdFont: tt.nerdFont}
+
+			renderStatus(&buf, file, tt.maxWidth, rctx)
+
+			output := buf.String()
+			visibleOutput := stripANSI(output)
+			actualWidth := width(visibleOutput)
+
+			// Width should not exceed maxWidth
+			if actualWidth > tt.maxWidth {
+				t.Errorf("renderStatus() width = %d, want <= %d\nOutput: %q", actualWidth, tt.maxWidth, visibleOutput)
+			}
+
+			if tt.nerdFont {
+				// The visible output (stripped of ANSI) should contain nerdfont icons
+				stripped := stripANSI(output)
+				expectedStripped := stripANSI(statusToNerdFont(tt.status))
+				if !strings.Contains(stripped, expectedStripped) {
+					t.Errorf("renderStatus() with nerdfont: visible output %q should contain %q", stripped, expectedStripped)
+				}
+				// Should NOT contain the raw letter status
+				if strings.Contains(stripped, tt.status) && tt.status != "" {
+					t.Errorf("renderStatus() with nerdfont should not contain raw status %q in visible output", tt.status)
+				}
+			} else {
+				// Should contain the raw status text
+				if !strings.Contains(output, tt.status) {
+					t.Errorf("renderStatus() without nerdfont should contain %q, got %q", tt.status, output)
+				}
+			}
+		})
+	}
+}
+
+// TestCalculateColumnWidthsNerdFont tests that column width calculation works with nerdfont
+func TestCalculateColumnWidthsNerdFont(t *testing.T) {
+	files := []*File{
+		{
+			entry:  &mockDirEntry{name: "file1.go"},
+			status: "M ", // staged only → 1 icon
+		},
+		{
+			entry:  &mockDirEntry{name: "file2.go"},
+			status: "??", // both positions → 2 icons
+		},
+	}
+
+	// Without nerdfont, status width should be 2 ("M " and "??" are both 2 chars)
+	rctxOff := &RenderContext{NerdFont: false}
+	widthsOff := calculateColumnWidths(files, []Column{ColStatus}, rctxOff)
+	if widthsOff[ColStatus] != 2 {
+		t.Errorf("Without nerdfont, status width = %d, want 2", widthsOff[ColStatus])
+	}
+
+	// With nerdfont, both "M " and "??" produce icon+space (width 2)
+	rctxOn := &RenderContext{NerdFont: true}
+	widthsOn := calculateColumnWidths(files, []Column{ColStatus}, rctxOn)
+	if widthsOn[ColStatus] != 2 {
+		t.Errorf("With nerdfont, status width = %d, want 2", widthsOn[ColStatus])
+	}
+
+	// With only single-position statuses, width should be 2 (icon + trailing space)
+	singleFiles := []*File{
+		{entry: &mockDirEntry{name: "a.go"}, status: "M "},
+		{entry: &mockDirEntry{name: "b.go"}, status: " D"},
+	}
+	widthsSingle := calculateColumnWidths(singleFiles, []Column{ColStatus}, rctxOn)
+	if widthsSingle[ColStatus] != 2 {
+		t.Errorf("With nerdfont single-position statuses, width = %d, want 2", widthsSingle[ColStatus])
+	}
+
+	// With MM (both positions), width should be 4 (icon + space + icon + trailing space)
+	bothFiles := []*File{
+		{entry: &mockDirEntry{name: "a.go"}, status: "M "},
+		{entry: &mockDirEntry{name: "b.go"}, status: "MM"},
+	}
+	widthsBoth := calculateColumnWidths(bothFiles, []Column{ColStatus}, rctxOn)
+	if widthsBoth[ColStatus] != 4 {
+		t.Errorf("With nerdfont MM status, width = %d, want 4", widthsBoth[ColStatus])
 	}
 }
 
@@ -255,7 +440,8 @@ func TestCalculateColumnWidthsWithDiacritics(t *testing.T) {
 	}
 
 	columns := []Column{ColAuthor, ColCommitMessage}
-	widths := calculateColumnWidths(files, columns)
+	rctx := &RenderContext{}
+	widths := calculateColumnWidths(files, columns, rctx)
 
 	// The author column should use the visual width (all characters are single-width)
 	// "Pål Grønås Drange" is 17 characters and 17 visual columns

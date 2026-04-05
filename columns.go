@@ -5,6 +5,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/mattn/go-runewidth"
 )
@@ -13,6 +14,111 @@ import (
 // properly handling Unicode characters including diacritics
 func truncateToWidth(s string, maxWidth int) string {
 	return runewidth.Truncate(s, maxWidth, "")
+}
+
+// Nerd Font icons for individual git status characters.
+// See https://www.nerdfonts.com/cheat-sheet for the full icon list.
+//
+// Git's porcelain status is two characters: [index][worktree].
+// The index (staged) character is colored green, worktree (unstaged) is red,
+// matching git's own color convention.
+var nerdFontCharMap = map[byte]string{
+	'M': "\uf040", // nf-fa-pencil (modified)
+	'A': "\uf471", // nf-oct-diff_added (added)
+	'D': "\uf014", // nf-fa-trash_o (deleted)
+	'R': "\uf064", // nf-fa-share (renamed/moved)
+	'C': "\uf0c5", // nf-fa-copy (copied)
+	'U': "\uf0e7", // nf-fa-bolt (unmerged)
+}
+
+// nerdFontSpecialMap handles statuses that don't follow the 2-char
+// [index][worktree] pattern, or where the two characters don't represent
+// separate staged/unstaged states.
+var nerdFontSpecialMap = map[string]string{
+	"I":  "\uf070", // nf-fa-eye_slash (ignored)
+	"*":  "\ue5fb", // nf-custom-folder_git (.git directory)
+	"??": "\uf128", // nf-fa-question (untracked — not a staged/unstaged split)
+	"UU": "\uf0e7", // nf-fa-bolt (unmerged, both modified)
+	"AA": "\uf0e7", // nf-fa-bolt (unmerged, both added)
+	"DD": "\uf0e7", // nf-fa-bolt (unmerged, both deleted)
+	"AU": "\uf0e7", // nf-fa-bolt (unmerged, added by us)
+	"UA": "\uf0e7", // nf-fa-bolt (unmerged, added by them)
+	"DU": "\uf0e7", // nf-fa-bolt (unmerged, deleted by us)
+	"UD": "\uf0e7", // nf-fa-bolt (unmerged, deleted by them)
+}
+
+// statusToNerdFont converts a git status string to a colored Nerd Font icon
+// string. For 2-character statuses, the index (first) character is shown in
+// green and the worktree (second) character in red, preserving the
+// staged-vs-unstaged distinction. For compound statuses (comma-separated),
+// each part is converted independently.
+func statusToNerdFont(status string) string {
+	if status == "" {
+		return ""
+	}
+
+	// Handle compound statuses like "M , D"
+	parts := strings.Split(status, ",")
+	var result strings.Builder
+	for _, part := range parts {
+		result.WriteString(statusPartToNerdFont(part))
+	}
+	return result.String()
+}
+
+// statusPartToNerdFont converts a single status code to nerdfont icons.
+// All returned strings include a trailing space to visually separate the
+// status icons from the adjacent diff column.
+func statusPartToNerdFont(status string) string {
+	// Check special statuses first
+	if icon, ok := nerdFontSpecialMap[status]; ok {
+		return icon + " "
+	}
+
+	// Standard 2-char status: [index][worktree]
+	if len(status) == 2 {
+		idx, wt := status[0], status[1]
+		idxIcon, hasIdx := nerdFontCharMap[idx]
+		wtIcon, hasWt := nerdFontCharMap[wt]
+
+		if hasIdx || hasWt {
+			var result strings.Builder
+
+			// Index (staged) character — green
+			if hasIdx {
+				result.WriteString(GREEN)
+				result.WriteString(idxIcon)
+				result.WriteString(RESET)
+			}
+
+			// Separate icons with a space to prevent terminal
+			// rendering glitches with adjacent PUA glyphs
+			if hasIdx && hasWt {
+				result.WriteByte(' ')
+			}
+
+			// Worktree (unstaged) character — red
+			if hasWt {
+				result.WriteString(RED)
+				result.WriteString(wtIcon)
+				result.WriteString(RESET)
+			}
+
+			// Trailing space to visually separate from the next column
+			result.WriteByte(' ')
+
+			return result.String()
+		}
+	}
+
+	// Fallback: return the original text for unknown statuses
+	return status
+}
+
+// nerdFontStatusWidth returns the visible width of a nerdfont status string,
+// i.e. the number of icon characters that statusToNerdFont will produce.
+func nerdFontStatusWidth(status string) int {
+	return width(statusToNerdFont(status))
 }
 
 // Column represents a displayable column
@@ -61,7 +167,7 @@ func ValidColumns() map[string]Column {
 }
 
 // calculateColumnWidths computes the maximum width needed for each column
-func calculateColumnWidths(files []*File, columns []Column) map[Column]int {
+func calculateColumnWidths(files []*File, columns []Column, rctx *RenderContext) map[Column]int {
 	widths := make(map[Column]int)
 
 	for _, col := range columns {
@@ -70,7 +176,11 @@ func calculateColumnWidths(files []*File, columns []Column) map[Column]int {
 			var w int
 			switch col {
 			case ColStatus:
-				w = width(file.status)
+				if rctx.NerdFont {
+					w = nerdFontStatusWidth(file.status)
+				} else {
+					w = width(file.status)
+				}
 			case ColDiff:
 				w = width(file.diffStat)
 			case ColFilename:
@@ -105,7 +215,18 @@ func calculateColumnWidths(files []*File, columns []Column) map[Column]int {
 // renderStatus renders the status column
 func renderStatus(out io.Writer, file *File, maxWidth int, rctx *RenderContext) {
 	if maxWidth > 0 {
-		must(fmt.Fprintf(out, fmt.Sprintf("%%%ds", maxWidth), file.status))
+		var statusStr string
+		if rctx.NerdFont {
+			statusStr = statusToNerdFont(file.status)
+		} else {
+			statusStr = file.status
+		}
+		visibleWidth := width(statusStr)
+		// Right-align: pad with spaces on the left
+		for i := 0; i < maxWidth-visibleWidth; i++ {
+			must(fmt.Fprintf(out, " "))
+		}
+		must(fmt.Fprintf(out, "%s", statusStr))
 	}
 }
 
