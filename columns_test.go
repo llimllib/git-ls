@@ -260,7 +260,8 @@ func TestStatusToNerdFont(t *testing.T) {
 		{name: "renamed", status: "R ", expected: greenIcon(rename) + " "},
 		{name: "renamed then modified", status: "RM", expected: greenIcon(rename) + " " + redIcon(pencil) + " "},
 		{name: "copied", status: "C ", expected: greenIcon(copy) + " "},
-		{name: "unmerged both modified", status: "UU", expected: greenIcon(bolt) + " " + redIcon(bolt) + " "},
+		{name: "unmerged both modified", status: "UU", expected: bolt + " "},
+		{name: "unmerged both added", status: "AA", expected: bolt + " "},
 		{name: ".git directory", status: "*", expected: "\ue5fb "},
 		{name: "unknown status falls back", status: "ZZ", expected: "ZZ"},
 		{

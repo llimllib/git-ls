@@ -38,6 +38,13 @@ var nerdFontSpecialMap = map[string]string{
 	"I":  "\uf070", // nf-fa-eye_slash (ignored)
 	"*":  "\ue5fb", // nf-custom-folder_git (.git directory)
 	"??": "\uf128", // nf-fa-question (untracked — not a staged/unstaged split)
+	"UU": "\uf0e7", // nf-fa-bolt (unmerged, both modified)
+	"AA": "\uf0e7", // nf-fa-bolt (unmerged, both added)
+	"DD": "\uf0e7", // nf-fa-bolt (unmerged, both deleted)
+	"AU": "\uf0e7", // nf-fa-bolt (unmerged, added by us)
+	"UA": "\uf0e7", // nf-fa-bolt (unmerged, added by them)
+	"DU": "\uf0e7", // nf-fa-bolt (unmerged, deleted by us)
+	"UD": "\uf0e7", // nf-fa-bolt (unmerged, deleted by them)
 }
 
 // statusToNerdFont converts a git status string to a colored Nerd Font icon
