@@ -34,6 +34,7 @@ type Diff struct {
 type File struct {
 	entry        os.DirEntry
 	name         string // used for deleted files that don't have a DirEntry
+	oldName      string // pre-rename path for R/C status (relative to current directory)
 	status       string
 	diffSum      *Diff
 	diffStat     string
@@ -584,6 +585,10 @@ func gitStatus() []byte {
 
 func fileStatus(status []byte, files []*File, curdir string) {
 	gitStatusMap := make(map[string][]string)
+	// oldNameMap tracks the old (pre-rename) path for renamed/copied files,
+	// keyed by the new filename. This is needed so git log can look up
+	// the file's history under its previous name.
+	oldNameMap := make(map[string]string)
 	for line := range strings.SplitSeq(string(status), "\n") {
 		if len(line) >= 3 {
 			status := line[:2]
@@ -592,7 +597,19 @@ func fileStatus(status []byte, files []*File, curdir string) {
 			// and there's changes in /otherdir/whatever , this will create
 			// gitStatusMap entries of "..", which doesn't seem to mess stuff
 			// up but isn't ideal either
-			fileName := first(must(filepath.Rel(curdir, line[3:])))
+			path := line[3:]
+			// For renames and copies, git's porcelain output looks like:
+			//   R  old-name.txt -> new-name.txt
+			//   C  source.txt -> copy.txt
+			// We need the new filename (after " -> ") since that's what
+			// exists on disk, and we record the old name so we can look up
+			// the file's commit history.
+			if (status[0] == 'R' || status[0] == 'C') && strings.Contains(path, " -> ") {
+				parts := strings.SplitN(path, " -> ", 2)
+				oldNameMap[first(must(filepath.Rel(curdir, parts[1])))] = must(filepath.Rel(curdir, parts[0]))
+				path = parts[1]
+			}
+			fileName := first(must(filepath.Rel(curdir, path)))
 			if status == "!!" {
 				status = "I"
 			}
@@ -604,6 +621,9 @@ func fileStatus(status []byte, files []*File, curdir string) {
 		if fileStatus, ok := gitStatusMap[file.Name()]; ok {
 			slices.Sort(fileStatus)
 			file.status = strings.Join(slices.Compact(fileStatus), ",")
+		}
+		if oldName, ok := oldNameMap[file.Name()]; ok {
+			file.oldName = oldName
 		}
 		if file.Name() == ".git" {
 			file.status = "*"
@@ -658,6 +678,11 @@ func parseGitLogStreaming(files []*File) error {
 	filesNeeded := make(map[string]*File)
 	for _, f := range files {
 		filesNeeded[f.Name()] = f
+		// For renamed/copied files, also look for the old name so the
+		// streaming log can match the file under its previous path.
+		if f.oldName != "" {
+			filesNeeded[first(f.oldName)] = f
+		}
 	}
 
 	// Start git log with streaming output
@@ -731,8 +756,14 @@ func parseGitLogStreaming(files []*File) error {
 				file.authorEmail = currentCommit.authorEmail
 				file.message = currentCommit.message
 
-				// Remove from needed set
+				// Remove from needed set. For renamed/copied files we
+				// may have two keys (old name + new name) pointing to
+				// the same File, so delete both.
 				delete(filesNeeded, firstPart)
+				if file.oldName != "" {
+					delete(filesNeeded, first(file.oldName))
+					delete(filesNeeded, file.Name())
+				}
 				commitsSinceLastFind = 0 // Reset counter
 
 				// If we found all files, we can stop!
