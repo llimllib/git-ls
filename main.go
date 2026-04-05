@@ -54,6 +54,7 @@ type RenderContext struct {
 	GithubURL string
 	Dir       string
 	MonoHash  bool
+	NerdFont  bool
 }
 
 // Name returns the file name, either from the DirEntry or the name field
@@ -224,6 +225,10 @@ OPTIONS
         Use a single color (cyan) for all commit hashes instead of coloring
         each hash uniquely based on its value
 
+    --nerdfont
+        Replace git status letters with Nerd Font icons (requires a Nerd
+        Font-patched terminal font)
+
 %s
 `, link("https://github.com/llimllib/git-ls", "https://github.com/llimllib/git-ls"))
 }
@@ -232,6 +237,7 @@ func main() {
 	argv := os.Args[1:]
 	diffWidth := 4
 	monoHash := false
+	nerdFont := false
 	var formatColumns []Column
 	for len(argv) > 0 {
 		if argv[0] == "--version" {
@@ -244,6 +250,9 @@ func main() {
 		}
 		if argv[0] == "--mono-hash" {
 			monoHash = true
+			argv = argv[1:]
+		} else if argv[0] == "--nerdfont" {
+			nerdFont = true
 			argv = argv[1:]
 		} else if strings.HasPrefix(argv[0], "--diffWidth") {
 			if len(argv) == 1 {
@@ -347,6 +356,7 @@ func main() {
 		GithubURL: isGithub(gitData.remotes),
 		Dir:       must(filepath.Abs(".")),
 		MonoHash:  monoHash,
+		NerdFont:  nerdFont,
 	}
 	showColumns(os.Stdout, maxWidth, files, rctx, formatColumns)
 }
@@ -493,7 +503,7 @@ func makeDiffGraph(file *File, width int) string {
 
 func showColumns(out io.Writer, maxWidth int, files []*File, rctx *RenderContext, columns []Column) {
 	// Calculate max widths for each column
-	colWidths := calculateColumnWidths(files, columns)
+	colWidths := calculateColumnWidths(files, columns, rctx)
 
 	// Render each file
 	for _, file := range files {
