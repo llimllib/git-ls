@@ -9,6 +9,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"runtime/debug"
 	"slices"
 	"strconv"
 	"strings"
@@ -191,6 +192,27 @@ func fetchGitData() *gitResults {
 	return results
 }
 
+// printVersion prints version info including the commit hash if available
+func printVersion() {
+	commit := ""
+	if info, ok := debug.ReadBuildInfo(); ok {
+		for _, setting := range info.Settings {
+			if setting.Key == "vcs.revision" {
+				commit = setting.Value
+				if len(commit) > 7 {
+					commit = commit[:7]
+				}
+				break
+			}
+		}
+	}
+	if commit != "" {
+		fmt.Printf("%s (%s)\n", VERSION, commit)
+	} else {
+		fmt.Printf("%s\n", VERSION)
+	}
+}
+
 func usage() {
 	fmt.Printf(`GIT-LS(1)
 
@@ -241,7 +263,7 @@ func main() {
 	var formatColumns []Column
 	for len(argv) > 0 {
 		if argv[0] == "--version" {
-			fmt.Printf("%s\n", VERSION)
+			printVersion()
 			os.Exit(0)
 		}
 		if argv[0] == "--help" || argv[0] == "-h" {
