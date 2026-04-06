@@ -725,12 +725,15 @@ func parseGitLogStreaming(files []*File) error {
 		message     string
 	}
 
-	// Track commits since last find for early exit
-	commitsSinceLastFind := 0
-	const giveUpAfter = 5000 // If no new files found in 5000 commits, stop
+	// Track lines since last find for early exit. This counts lines of output
+	// (both commit metadata and filenames), not commits. In active monorepos
+	// a single root-level file might not appear for 100k+ lines if
+	// subdirectories see heavy churn.
+	linesSinceLastFind := 0
+	const giveUpAfter = 150000
 
 	for scanner.Scan() {
-		commitsSinceLastFind++
+		linesSinceLastFind++
 		line := scanner.Text()
 
 		if len(line) == 0 {
@@ -774,7 +777,7 @@ func parseGitLogStreaming(files []*File) error {
 					delete(filesNeeded, first(file.oldName))
 					delete(filesNeeded, file.Name())
 				}
-				commitsSinceLastFind = 0 // Reset counter
+				linesSinceLastFind = 0 // Reset counter
 
 				// If we found all files, we can stop!
 				if len(filesNeeded) == 0 {
@@ -790,7 +793,7 @@ func parseGitLogStreaming(files []*File) error {
 			}
 
 			// Early exit if we haven't found new files in a while
-			if commitsSinceLastFind > giveUpAfter {
+			if linesSinceLastFind > giveUpAfter {
 				_ = cmd.Process.Kill()
 				go func() {
 					for scanner.Scan() {
