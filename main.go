@@ -251,6 +251,11 @@ OPTIONS
         Replace git status letters with Nerd Font icons (requires a Nerd
         Font-patched terminal font)
 
+    -c, --changed-only
+        Only show files that have changes (appear in git status). This
+        filters out unmodified tracked files and shows only files with
+        status indicators (modified, added, deleted, renamed, etc.)
+
 %s
 `, link("https://github.com/llimllib/git-ls", "https://github.com/llimllib/git-ls"))
 }
@@ -260,6 +265,8 @@ func main() {
 	diffWidth := 4
 	monoHash := false
 	nerdFont := false
+	changedOnly := false
+	debug := false
 	var formatColumns []Column
 	for len(argv) > 0 {
 		if argv[0] == "--version" {
@@ -275,6 +282,9 @@ func main() {
 			argv = argv[1:]
 		} else if argv[0] == "--nerdfont" {
 			nerdFont = true
+			argv = argv[1:]
+		} else if argv[0] == "--changed-only" || argv[0] == "-c" {
+			changedOnly = true
 			argv = argv[1:]
 		} else if strings.HasPrefix(argv[0], "--diffWidth") {
 			if len(argv) == 1 {
@@ -302,6 +312,9 @@ func main() {
 				formatColumns = parseFormat(argv[1])
 				argv = argv[2:]
 			}
+		} else if strings.HasPrefix(argv[0], "--debug") {
+			debug = true
+			argv = argv[1:]
 		} else {
 			// Non-flag argument (directory), stop parsing flags
 			break
@@ -344,10 +357,60 @@ func main() {
 	resolved := must(filepath.EvalSymlinks(must(filepath.Abs("."))))
 	curdir := must(filepath.Rel(gitData.root, resolved))
 	fileStatus(gitData.status, files, curdir)
-	if err := parseGitLogStreaming(files); err != nil {
-		log.Printf("Warning: git log streaming failed: %v", err)
-		// Fallback to parallel approach if streaming fails
-		parseGitLogParallel(files)
+
+	// Parse deleted files from git status and merge into file list
+	deletedFiles := parseDeletedFiles(gitData.status, curdir)
+	files = append(files, deletedFiles...)
+
+	// Filter to only changed files if requested
+	if changedOnly {
+		var changedFiles []*File
+		for _, file := range files {
+			if file.status != "" {
+				changedFiles = append(changedFiles, file)
+			}
+		}
+		files = changedFiles
+	}
+
+	// Now run git log on the files we'll show
+	// Skip git log for files that won't have history:
+	// - I: Ignored files - not tracked by git
+	// - ??: Untracked files - not in git yet
+	// - *: .git directory - git metadata, not file history
+	// - A: Newly added files
+	//   Examples: "A ", "AM", "AD" - staged additions not yet committed
+	//   But "M ", "MM", or mixed dirs like "A ,M " have history
+	var filesNeedingLog []*File
+	for _, file := range files {
+		if file.status == "I" || file.status == "??" || file.status == "*" {
+			continue
+		}
+		// Check if ALL statuses in a comma-separated list are new additions
+		// For directories, status might be "A ,M " if it has both new and modified files
+		allNew := true
+		for status := range strings.SplitSeq(file.status, ",") {
+			status = strings.TrimSpace(status)
+			// Check if this individual status represents a file with history
+			// If first char (index) is not 'A' and not untracked, it has history
+			if len(status) > 0 && status[0] != 'A' && status != "??" {
+				allNew = false
+				break
+			}
+		}
+		if !allNew {
+			filesNeedingLog = append(filesNeedingLog, file)
+		}
+	}
+
+	if debug {
+		for _, file := range filesNeedingLog {
+			log.Printf("%s,", file.Name())
+		}
+		fmt.Printf("\n")
+	}
+	if err := parseGitLog(filesNeedingLog); err != nil {
+		log.Fatalf("Error: git log streaming failed: %v", err)
 	}
 	parseDiffStat(gitData.diffStat, files)
 
@@ -356,10 +419,7 @@ func main() {
 		file.diffStat = makeDiffGraph(file, diffWidth)
 	}
 
-	// Parse deleted files from git status and merge into file list
-	deletedFiles := parseDeletedFiles(gitData.status, curdir)
-	parseGitLogParallel(deletedFiles)
-	files = append(files, deletedFiles...)
+	// Sort files by name
 	slices.SortFunc(files, func(a, b *File) int {
 		return strings.Compare(strings.ToLower(a.Name()), strings.ToLower(b.Name()))
 	})
@@ -688,20 +748,14 @@ func parseDeletedFiles(status []byte, curdir string) []*File {
 	return deletedFiles
 }
 
-// gitLogResult holds the result of a git log call for a single file
-type gitLogResult struct {
-	file   *File
-	output []byte
-}
-
-// parseGitLogStreaming runs a single git log command and streams the output,
+// parseGitLog runs a single git log command and streams the output,
 // stopping as soon as all files are found. This is much faster than spawning
 // N processes because:
 // 1. Single process (no spawn overhead)
 // 2. Early exit (stops when all files found)
 // 3. Walks history once (all files benefit from git's caching)
 // 4. Directory scoped (only checks current directory)
-func parseGitLogStreaming(files []*File) error {
+func parseGitLog(files []*File) error {
 	if len(files) == 0 {
 		return nil
 	}
@@ -841,42 +895,6 @@ func parseGitLogStreaming(files []*File) error {
 	// or not in git history. They'll just have empty commit info.
 
 	return nil
-}
-
-// parseGitLogParallel runs git log -1 for each file in parallel and parses
-// the results. This is used for deleted files where we need individual lookups.
-func parseGitLogParallel(files []*File) {
-	results := make(chan gitLogResult, len(files))
-
-	// Launch all git log commands in parallel
-	for _, file := range files {
-		go func(f *File) {
-			cmd := exec.Command("git", "-c", "core.fsmonitor=false", "log", "-1", "--date=format:%Y-%m-%d",
-				"--pretty=format:%H%x00%h%x00%ad%x00%aN%x00%aE%x00%s", "--", f.Name())
-			out, _ := cmd.Output()
-			results <- gitLogResult{file: f, output: out}
-		}(file)
-	}
-
-	// Collect results
-	for range len(files) {
-		result := <-results
-		if len(result.output) == 0 {
-			continue
-		}
-
-		parts := strings.SplitN(string(result.output), "\x00", 6)
-		if len(parts) != 6 {
-			continue
-		}
-
-		result.file.hash = parts[0]
-		result.file.shortHash = parts[1]
-		result.file.lastModified = parts[2]
-		result.file.author = parts[3]
-		result.file.authorEmail = parts[4]
-		result.file.message = parts[5]
-	}
 }
 
 // first returns the first part of a filepath. Given "some/file/path", it will

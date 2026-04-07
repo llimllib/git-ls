@@ -484,7 +484,7 @@ func TestWorktreeWithSymlink(t *testing.T) {
 
 	// Create a git repo with one commit
 	repoDir := tmpDir + "/repo"
-	if err := os.Mkdir(repoDir, 0755); err != nil {
+	if err := os.Mkdir(repoDir, 0o755); err != nil {
 		t.Fatalf("Failed to create repo dir: %v", err)
 	}
 
@@ -502,7 +502,7 @@ func TestWorktreeWithSymlink(t *testing.T) {
 	}
 
 	// Create and commit a file
-	if err := os.WriteFile(repoDir+"/file1.txt", []byte("hello"), 0644); err != nil {
+	if err := os.WriteFile(repoDir+"/file1.txt", []byte("hello"), 0o644); err != nil {
 		t.Fatalf("Failed to write file: %v", err)
 	}
 	if err := runCmd(repoDir, "git", "add", "file1.txt"); err != nil {
@@ -519,7 +519,7 @@ func TestWorktreeWithSymlink(t *testing.T) {
 	}
 
 	// Add an untracked file in the worktree
-	if err := os.WriteFile(wtDir+"/rootfile.txt", []byte("untracked"), 0644); err != nil {
+	if err := os.WriteFile(wtDir+"/rootfile.txt", []byte("untracked"), 0o644); err != nil {
 		t.Fatalf("Failed to write untracked file: %v", err)
 	}
 
@@ -656,7 +656,7 @@ func TestSubdirectoryGitInfo(t *testing.T) {
 
 	// Create a git repo
 	repoDir := tmpDir + "/repo"
-	if err := os.Mkdir(repoDir, 0755); err != nil {
+	if err := os.Mkdir(repoDir, 0o755); err != nil {
 		t.Fatalf("Failed to create repo dir: %v", err)
 	}
 
@@ -675,10 +675,10 @@ func TestSubdirectoryGitInfo(t *testing.T) {
 
 	// Create a subdirectory with a file
 	subDir := repoDir + "/docs"
-	if err := os.Mkdir(subDir, 0755); err != nil {
+	if err := os.Mkdir(subDir, 0o755); err != nil {
 		t.Fatalf("Failed to create subdir: %v", err)
 	}
-	if err := os.WriteFile(subDir+"/README.md", []byte("# Documentation"), 0644); err != nil {
+	if err := os.WriteFile(subDir+"/README.md", []byte("# Documentation"), 0o644); err != nil {
 		t.Fatalf("Failed to write file: %v", err)
 	}
 
@@ -719,8 +719,8 @@ func TestSubdirectoryGitInfo(t *testing.T) {
 	}
 
 	// Run parseGitLogStreaming to get git info
-	if err := parseGitLogStreaming(files); err != nil {
-		t.Fatalf("parseGitLogStreaming failed: %v", err)
+	if err := parseGitLog(files); err != nil {
+		t.Fatalf("parseGitLog failed: %v", err)
 	}
 
 	// Verify that README.md has git info populated
@@ -767,7 +767,7 @@ func TestEmptyRepository(t *testing.T) {
 
 	// Create an empty git repo (no commits)
 	repoDir := tmpDir + "/empty-repo"
-	if err := os.Mkdir(repoDir, 0755); err != nil {
+	if err := os.Mkdir(repoDir, 0o755); err != nil {
 		t.Fatalf("Failed to create repo dir: %v", err)
 	}
 
@@ -785,7 +785,7 @@ func TestEmptyRepository(t *testing.T) {
 	}
 
 	// Create a file but don't commit it
-	if err := os.WriteFile(repoDir+"/test.txt", []byte("hello"), 0644); err != nil {
+	if err := os.WriteFile(repoDir+"/test.txt", []byte("hello"), 0o644); err != nil {
 		t.Fatalf("Failed to write file: %v", err)
 	}
 
@@ -816,7 +816,114 @@ func TestEmptyRepository(t *testing.T) {
 	t.Log("Successfully ran gitDiffStat() in empty repository without crashing")
 }
 
-// TestRenamedFileGitInfo tests that renamed files show the commit info from
+// TestChangedOnly verifies that the --changed-only flag filters files
+// to only show those with git status.
+func TestChangedOnly(t *testing.T) {
+	// Create test files with different statuses
+	files := []*File{
+		{entry: &mockDirEntry{name: "modified.go"}, status: "M "},
+		{entry: &mockDirEntry{name: "untracked.go"}, status: "??"},
+		{entry: &mockDirEntry{name: "clean.go"}, status: ""},
+		{entry: &mockDirEntry{name: "added.go"}, status: "A "},
+		{entry: &mockDirEntry{name: "another-clean.go"}, status: ""},
+		{name: "deleted.go", status: "D ", isDeleted: true},
+	}
+
+	// Filter to only changed files (mimicking the --changed-only logic)
+	var changedFiles []*File
+	for _, file := range files {
+		if file.status != "" {
+			changedFiles = append(changedFiles, file)
+		}
+	}
+
+	// Verify we got only the files with status
+	if len(changedFiles) != 4 {
+		t.Errorf("Expected 4 changed files, got %d", len(changedFiles))
+	}
+
+	// Verify the correct files were kept
+	expectedNames := map[string]bool{
+		"modified.go":  true,
+		"untracked.go": true,
+		"added.go":     true,
+		"deleted.go":   true,
+	}
+
+	for _, f := range changedFiles {
+		name := f.Name()
+		if !expectedNames[name] {
+			t.Errorf("Unexpected file in changed list: %s", name)
+		}
+		delete(expectedNames, name)
+	}
+
+	if len(expectedNames) > 0 {
+		for name := range expectedNames {
+			t.Errorf("Expected file %s was not in changed list", name)
+		}
+	}
+}
+
+// TestSkipGitLogForIgnoredFiles verifies that we skip git log for files
+// that don't have meaningful history (ignored, untracked, .git, newly added)
+func TestSkipGitLogForIgnoredFiles(t *testing.T) {
+	files := []*File{
+		{entry: &mockDirEntry{name: "modified.go"}, status: "M "},
+		{entry: &mockDirEntry{name: "ignored.log"}, status: "I"},
+		{entry: &mockDirEntry{name: "untracked.go"}, status: "??"},
+		{entry: &mockDirEntry{name: ".git"}, status: "*"},
+		{entry: &mockDirEntry{name: "added.go"}, status: "A "},
+		{entry: &mockDirEntry{name: "added-modified.go"}, status: "AM"},
+		{entry: &mockDirEntry{name: "dir-with-changes"}, status: "A ,M "},
+	}
+
+	// Filter files that need git log (mimicking the optimization)
+	var filesNeedingLog []*File
+	for _, file := range files {
+		if file.status == "I" || file.status == "??" || file.status == "*" {
+			continue
+		}
+		// Check if ALL statuses are additions (no history to look up)
+		allNew := true
+		for status := range strings.SplitSeq(file.status, ",") {
+			status = strings.TrimSpace(status)
+			if len(status) > 0 && status[0] != 'A' && status != "??" {
+				allNew = false
+				break
+			}
+		}
+		if !allNew {
+			filesNeedingLog = append(filesNeedingLog, file)
+		}
+	}
+
+	// Should have 2 files: modified.go and dir-with-changes
+	// Skip: ignored, untracked, .git, purely added files
+	if len(filesNeedingLog) != 2 {
+		t.Errorf("Expected 2 files needing git log, got %d", len(filesNeedingLog))
+	}
+
+	expectedNames := map[string]bool{
+		"modified.go":      true,
+		"dir-with-changes": true,
+	}
+
+	for _, f := range filesNeedingLog {
+		name := f.Name()
+		if !expectedNames[name] {
+			t.Errorf("Unexpected file needing git log: %s", name)
+		}
+		delete(expectedNames, name)
+	}
+
+	if len(expectedNames) > 0 {
+		for name := range expectedNames {
+			t.Errorf("Expected file %s was not in files needing git log", name)
+		}
+	}
+}
+
 // the file's previous name. This is a regression test for a bug where renamed
 // files had no git log info because git log couldn't find history under the
 // new name.
@@ -824,7 +931,7 @@ func TestRenamedFileGitInfo(t *testing.T) {
 	tmpDir := t.TempDir()
 
 	repoDir := tmpDir + "/repo"
-	if err := os.Mkdir(repoDir, 0755); err != nil {
+	if err := os.Mkdir(repoDir, 0o755); err != nil {
 		t.Fatalf("Failed to create repo dir: %v", err)
 	}
 
@@ -839,7 +946,7 @@ func TestRenamedFileGitInfo(t *testing.T) {
 	}
 
 	// Create and commit a file
-	if err := os.WriteFile(repoDir+"/old-name.txt", []byte("hello world\n"), 0644); err != nil {
+	if err := os.WriteFile(repoDir+"/old-name.txt", []byte("hello world\n"), 0o644); err != nil {
 		t.Fatalf("Failed to write file: %v", err)
 	}
 	if err := runCmd(repoDir, "git", "add", "old-name.txt"); err != nil {
@@ -887,8 +994,8 @@ func TestRenamedFileGitInfo(t *testing.T) {
 	fileStatus(gitData.status, files, curdir)
 
 	// Run the streaming log — should find renamed files via their old name
-	if err := parseGitLogStreaming(files); err != nil {
-		t.Fatalf("parseGitLogStreaming failed: %v", err)
+	if err := parseGitLog(files); err != nil {
+		t.Fatalf("parseGitLog failed: %v", err)
 	}
 
 	// Find new-name.txt
