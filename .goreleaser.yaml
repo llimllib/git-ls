@@ -36,6 +36,8 @@ archives:
     format_overrides:
       - goos: windows
         formats: ["zip"]
+    files:
+      - manpage/git-ls.1
 
 changelog:
   sort: asc
@@ -53,3 +55,6 @@ brews:
       owner: llimllib
       name: homebrew-git-ls
       branch: main
+    install: |
+      bin.install "git-ls"
+      man1.install "manpage/git-ls.1"

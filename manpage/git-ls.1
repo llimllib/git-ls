@@ -1,0 +1,81 @@
+.TH GIT-LS 1 "2026-04-08" "git-ls" "User Commands"
+.SH NAME
+git-ls \- show the current directory annotated with links and git info
+.SH SYNOPSIS
+.B git ls
+.RI [ <dir> ]
+.SH DESCRIPTION
+.B git-ls
+displays the files in the current directory, their current git status, a short
+diffstat, their last modified date, the author and a portion of the last commit
+message for that file.
+.PP
+All files are hyperlinked with OSC8 hyperlinks, so you should be able to open
+them by clicking on them in a properly-configured terminal. The author names are
+hyperlinked to GitHub if the repository has a GitHub remote, as are commit messages.
+.SH OPTIONS
+.TP
+.B \-\-version
+Print the version number and exit.
+.TP
+.BR \-\-help ", " \-h
+Print the help message and exit.
+.TP
+.BI \-\-diffWidth= n
+Print the diffStat graph with the given width. Default is 4.
+.TP
+.BI \-\-format= col1,col2,...
+Specify which columns to display and in what order. Valid columns:
+.BR status ", " diff ", " filename ", " shorthash ", " hash ", " date ", " author ", "
+.BR email ", " numstat ", " commitmessage .
+.br
+Default:
+.BR status,diff,filename,shorthash,date,author,commitmessage .
+.TP
+.B \-\-mono\-hash
+Use a single color (cyan) for all commit hashes instead of coloring each hash
+uniquely based on its value.
+.TP
+.B \-\-nerdfont
+Replace git status letters with Nerd Font icons (requires a Nerd Font-patched
+terminal font).
+.TP
+.BR \-c ", " \-\-changed\-only
+Only show files that have changes (appear in git status). This filters out
+unmodified tracked files and shows only files with status indicators (modified,
+added, deleted, renamed, etc.).
+.SH EXAMPLES
+.TP
+.B git ls
+Show all files in the current directory with git information.
+.TP
+.B git ls \-\-changed\-only
+Show only files that have uncommitted changes.
+.TP
+.B git ls \-\-format=filename,status,author
+Show custom columns: filename, status, and author only.
+.TP
+.B git ls \-\-diffWidth=8
+Show a wider diffstat graph (8 characters instead of 4).
+.SH TERMINAL SUPPORT
+For the best experience, use a terminal that supports OSC8 hyperlinks, such as:
+.IP \(bu 2
+kitty
+.IP \(bu 2
+iTerm2
+.IP \(bu 2
+WezTerm
+.PP
+In these terminals, you can click on filenames to open them in your preferred
+editor, or click on a PR number in a commit status to go straight to that PR in
+your browser.
+.SH AUTHOR
+Written by Bill Mill.
+.SH BUGS
+Report bugs at: https://github.com/llimllib/git-ls/issues
+.SH SEE ALSO
+.BR git (1),
+.BR git-status (1),
+.BR git-log (1)
+.PP
+Full documentation at: https://github.com/llimllib/git-ls
