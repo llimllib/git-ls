@@ -3,15 +3,10 @@ TRANSCRIPTS := $(wildcard transcripts/*)
 STATIC := $(wildcard static/*)
 
 .PHONY: all
-all: git-ls manpage/git-ls.1
+all: git-ls
 
 git-ls: $(SRC)
 	go build
-
-.PHONY: manpage/git-ls.1
-manpage/git-ls.1:
-	@# Man page is already generated, just verify it exists
-	@test -f manpage/git-ls.1 || (echo "Error: manpage/git-ls.1 not found" && exit 1)
 
 # depends on golangci-lint:
 # https://golangci-lint.run/welcome/install/#local-installation
