@@ -865,6 +865,114 @@ func TestChangedOnly(t *testing.T) {
 	}
 }
 
+// TestUnmodifiedFileGetsGitInfo verifies that clean tracked files (empty status)
+// get their commit information populated. This is a regression test for a bug
+// introduced with --changed-only where the filesNeedingLog filter excluded files
+// with empty status, causing unmodified files to show no commit info.
+func TestUnmodifiedFileGetsGitInfo(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	repoDir := tmpDir + "/repo"
+	if err := os.Mkdir(repoDir, 0o755); err != nil {
+		t.Fatalf("Failed to create repo dir: %v", err)
+	}
+
+	if err := runCmd(repoDir, "git", "init", "-b", "main"); err != nil {
+		t.Fatalf("Failed to init repo: %v", err)
+	}
+	if err := runCmd(repoDir, "git", "config", "user.email", "test@example.com"); err != nil {
+		t.Fatalf("Failed to set git email: %v", err)
+	}
+	if err := runCmd(repoDir, "git", "config", "user.name", "Test User"); err != nil {
+		t.Fatalf("Failed to set git name: %v", err)
+	}
+
+	if err := os.WriteFile(repoDir+"/clean.go", []byte("package main\n"), 0o644); err != nil {
+		t.Fatalf("Failed to write file: %v", err)
+	}
+	if err := runCmd(repoDir, "git", "add", "clean.go"); err != nil {
+		t.Fatalf("Failed to add file: %v", err)
+	}
+	if err := runCmd(repoDir, "git", "commit", "-m", "add clean file"); err != nil {
+		t.Fatalf("Failed to commit: %v", err)
+	}
+
+	oldDir, _ := os.Getwd()
+	defer func() {
+		if err := os.Chdir(oldDir); err != nil {
+			t.Logf("Failed to restore directory: %v", err)
+		}
+	}()
+
+	if err := os.Chdir(repoDir); err != nil {
+		t.Fatalf("Failed to chdir: %v", err)
+	}
+
+	osfiles, err := os.ReadDir(".")
+	if err != nil {
+		t.Fatalf("Failed to read directory: %v", err)
+	}
+
+	var files []*File
+	for _, file := range osfiles {
+		stat, _ := os.Stat(file.Name())
+		files = append(files, &File{
+			entry: file,
+			isDir: file.IsDir(),
+			isExe: !file.IsDir() && stat.Mode()&0o111 != 0,
+		})
+	}
+
+	gitData := fetchGitData()
+	resolved := must(filepath.EvalSymlinks(must(filepath.Abs("."))))
+	curdir := must(filepath.Rel(gitData.root, resolved))
+	fileStatus(gitData.status, files, curdir)
+
+	// Replicate the filesNeedingLog filter from main() — this is the code under test
+	var filesNeedingLog []*File
+	for _, file := range files {
+		if file.status == "I" || file.status == "??" || file.status == "*" {
+			continue
+		}
+		if file.status == "" {
+			filesNeedingLog = append(filesNeedingLog, file)
+			continue
+		}
+		allNew := true
+		for status := range strings.SplitSeq(file.status, ",") {
+			status = strings.TrimSpace(status)
+			if len(status) > 0 && status[0] != 'A' && status != "??" {
+				allNew = false
+				break
+			}
+		}
+		if !allNew {
+			filesNeedingLog = append(filesNeedingLog, file)
+		}
+	}
+
+	if err := parseGitLog(filesNeedingLog); err != nil {
+		t.Fatalf("parseGitLog failed: %v", err)
+	}
+
+	var clean *File
+	for _, f := range files {
+		if f.Name() == "clean.go" {
+			clean = f
+			break
+		}
+	}
+	if clean == nil {
+		t.Fatal("clean.go not found in file list")
+	}
+	if clean.hash == "" {
+		t.Error("Expected unmodified tracked file to have a commit hash, but it was empty")
+	}
+	if clean.message != "add clean file" {
+		t.Errorf("Expected message 'add clean file', got %q", clean.message)
+	}
+}
+
 // TestSkipGitLogForIgnoredFiles verifies that we skip git log for files
 // that don't have meaningful history (ignored, untracked, .git, newly added)
 func TestSkipGitLogForIgnoredFiles(t *testing.T) {

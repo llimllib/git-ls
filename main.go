@@ -386,6 +386,11 @@ func main() {
 		if file.status == "I" || file.status == "??" || file.status == "*" {
 			continue
 		}
+		// Empty status means unmodified tracked file — it has history
+		if file.status == "" {
+			filesNeedingLog = append(filesNeedingLog, file)
+			continue
+		}
 		// Check if ALL statuses in a comma-separated list are new additions
 		// For directories, status might be "A ,M " if it has both new and modified files
 		allNew := true
