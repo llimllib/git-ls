@@ -1143,3 +1143,128 @@ func TestRenamedFileGitInfo(t *testing.T) {
 		t.Errorf("Expected message 'initial commit', got %q", renamed.message)
 	}
 }
+
+func TestHeadDescription(t *testing.T) {
+	tmpDir := t.TempDir()
+	repoDir := tmpDir + "/repo"
+	if err := os.Mkdir(repoDir, 0o755); err != nil {
+		t.Fatalf("Failed to create repo dir: %v", err)
+	}
+
+	for _, args := range [][]string{
+		{"init", "-b", "main"},
+		{"config", "user.email", "test@example.com"},
+		{"config", "user.name", "Test User"},
+	} {
+		if err := runCmd(repoDir, "git", args...); err != nil {
+			t.Fatalf("git %v failed: %v", args, err)
+		}
+	}
+
+	// Create two commits so we can detach at the first one
+	if err := os.WriteFile(repoDir+"/a.txt", []byte("a"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := runCmd(repoDir, "git", "add", "."); err != nil {
+		t.Fatal(err)
+	}
+	if err := runCmd(repoDir, "git", "commit", "-m", "first"); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(repoDir+"/b.txt", []byte("b"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := runCmd(repoDir, "git", "add", "."); err != nil {
+		t.Fatal(err)
+	}
+	if err := runCmd(repoDir, "git", "commit", "-m", "second"); err != nil {
+		t.Fatal(err)
+	}
+
+	oldDir, _ := os.Getwd()
+	defer func() { _ = os.Chdir(oldDir) }()
+	if err := os.Chdir(repoDir); err != nil {
+		t.Fatal(err)
+	}
+
+	// On a branch
+	t.Run("on branch", func(t *testing.T) {
+		desc := headDescription()
+		if desc != "On branch main" {
+			t.Fatalf("expected 'On branch main', got %q", desc)
+		}
+	})
+
+	// Detach HEAD at the first commit
+	if err := runCmd(repoDir, "git", "checkout", "--detach", "HEAD~1"); err != nil {
+		t.Fatal(err)
+	}
+
+	t.Run("detached at", func(t *testing.T) {
+		desc := headDescription()
+		if !strings.HasPrefix(desc, "HEAD detached at ") {
+			t.Fatalf("expected 'HEAD detached at <hash>', got %q", desc)
+		}
+		hash := strings.TrimPrefix(desc, "HEAD detached at ")
+		if len(hash) < 7 {
+			t.Fatalf("expected at least 7-char short hash, got %q", hash)
+		}
+	})
+
+	// Make a commit while detached — now it should be "detached from"
+	if err := runCmd(repoDir, "git", "commit", "--allow-empty", "-m", "detached commit"); err != nil {
+		t.Fatal(err)
+	}
+
+	t.Run("detached from", func(t *testing.T) {
+		desc := headDescription()
+		if !strings.HasPrefix(desc, "HEAD detached from ") {
+			t.Fatalf("expected 'HEAD detached from <hash>', got %q", desc)
+		}
+	})
+
+	// Go back to main for rebase test
+	if err := runCmd(repoDir, "git", "switch", "main"); err != nil {
+		t.Fatal(err)
+	}
+
+	// Create a branch with a conflicting change for rebase
+	if err := runCmd(repoDir, "git", "checkout", "-b", "feature"); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(repoDir+"/a.txt", []byte("feature change"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := runCmd(repoDir, "git", "add", "."); err != nil {
+		t.Fatal(err)
+	}
+	if err := runCmd(repoDir, "git", "commit", "-m", "feature"); err != nil {
+		t.Fatal(err)
+	}
+
+	// Start a rebase that will conflict
+	if err := runCmd(repoDir, "git", "switch", "main"); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(repoDir+"/a.txt", []byte("main change"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := runCmd(repoDir, "git", "add", "."); err != nil {
+		t.Fatal(err)
+	}
+	if err := runCmd(repoDir, "git", "commit", "-m", "main diverge"); err != nil {
+		t.Fatal(err)
+	}
+	if err := runCmd(repoDir, "git", "switch", "feature"); err != nil {
+		t.Fatal(err)
+	}
+	// This rebase will fail due to conflict — that's what we want
+	_ = runCmd(repoDir, "git", "rebase", "main")
+
+	t.Run("rebase in progress", func(t *testing.T) {
+		desc := headDescription()
+		if !strings.Contains(desc, "rebase in progress; onto ") {
+			t.Fatalf("expected rebase message, got %q", desc)
+		}
+	})
+}
