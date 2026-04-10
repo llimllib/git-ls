@@ -171,7 +171,7 @@ func fetchGitData() *gitResults {
 	})
 
 	wg.Go(func() {
-		results.currentBranch = gitCurrentBranchSymbolic()
+		results.currentBranch = headDescription()
 	})
 
 	wg.Go(func() {
@@ -438,7 +438,7 @@ func main() {
 	if maxWidth == 0 {
 		maxWidth = 80 // default when not a TTY
 	}
-	fmt.Printf("On branch %s%s%s\n\n", RED, gitData.currentBranch, RESET)
+	fmt.Printf("%s%s%s\n\n", RED, gitData.currentBranch, RESET)
 	rctx := &RenderContext{
 		GithubURL: isGithub(gitData.remotes),
 		Dir:       must(filepath.Abs(".")),
@@ -648,15 +648,131 @@ func isGithub(out []byte) string {
 	return ""
 }
 
-// gitCurrentBranchSymbolic gets the current branch name using symbolic-ref.
-// This works in empty repos (no commits) where rev-parse would fail.
-func gitCurrentBranchSymbolic() string {
+// headDescription returns a string describing the current HEAD state,
+// matching git-status output: "On branch X", "HEAD detached at X",
+// "HEAD detached from X", or rebase-in-progress messages.
+// The returned string includes the prefix (e.g. "On branch ").
+func headDescription() string {
+	// Try symbolic-ref first — if it works, we're on a branch
 	cmd := exec.Command("git", "-c", "core.fsmonitor=false", "symbolic-ref", "--short", "HEAD")
 	out, err := cmd.Output()
+	if err == nil {
+		return "On branch " + strings.TrimSpace(string(out))
+	}
+
+	// We're in detached HEAD state. Check for rebase.
+	gitDir := gitCommonDir()
+	if desc := rebaseDescription(gitDir); desc != "" {
+		return desc
+	}
+
+	// Determine "detached at" vs "detached from" by comparing HEAD to the
+	// commit we originally detached at (found via reflog).
+	return detachedDescription()
+}
+
+// gitCommonDir returns the path to the git common dir (handles worktrees).
+func gitCommonDir() string {
+	cmd := exec.Command("git", "-c", "core.fsmonitor=false", "rev-parse", "--git-common-dir")
+	out, err := cmd.Output()
 	if err != nil {
-		log.Fatalf("Failed to get current branch: %v", err)
+		return ".git"
 	}
 	return strings.TrimSpace(string(out))
+}
+
+// rebaseDescription checks for an in-progress rebase and returns the
+// appropriate status string, or "" if no rebase is active.
+func rebaseDescription(gitDir string) string {
+	ontoBytes, err := os.ReadFile(filepath.Join(gitDir, "rebase-merge", "onto"))
+	if err == nil {
+		onto := strings.TrimSpace(string(ontoBytes))
+		onto = shortOid(onto)
+		if _, e := os.Stat(filepath.Join(gitDir, "rebase-merge", "interactive")); e == nil {
+			return "interactive rebase in progress; onto " + onto
+		}
+		return "rebase in progress; onto " + onto
+	}
+	ontoBytes, err = os.ReadFile(filepath.Join(gitDir, "rebase-apply", "onto"))
+	if err == nil {
+		onto := strings.TrimSpace(string(ontoBytes))
+		onto = shortOid(onto)
+		return "rebase in progress; onto " + onto
+	}
+	return ""
+}
+
+// shortOid abbreviates a full hex oid via rev-parse --short.
+func shortOid(oid string) string {
+	cmd := exec.Command("git", "-c", "core.fsmonitor=false", "rev-parse", "--short", oid)
+	out, err := cmd.Output()
+	if err != nil {
+		return oid
+	}
+	return strings.TrimSpace(string(out))
+}
+
+// detachedDescription returns "HEAD detached at X" or "HEAD detached from X"
+// by inspecting the reflog, mirroring git-status behavior.
+func detachedDescription() string {
+	// Walk the reflog to find the checkout/switch entry where we detached.
+	// That entry's oid is the commit we originally landed on.
+	cmd := exec.Command("git", "-c", "core.fsmonitor=false",
+		"reflog", "--format=%H %gs", "HEAD")
+	reflogOut, err := cmd.Output()
+	if err != nil {
+		return "Not currently on any branch."
+	}
+
+	var detachedOid string
+	for line := range strings.SplitSeq(strings.TrimSpace(string(reflogOut)), "\n") {
+		if strings.Contains(line, "checkout: ") || strings.Contains(line, "switch: ") {
+			detachedOid, _, _ = strings.Cut(line, " ")
+			break
+		}
+	}
+	if detachedOid == "" {
+		return "Not currently on any branch."
+	}
+
+	// Get current HEAD oid
+	cmd = exec.Command("git", "-c", "core.fsmonitor=false", "rev-parse", "HEAD")
+	headOut, err := cmd.Output()
+	if err != nil {
+		return "Not currently on any branch."
+	}
+	headOid := strings.TrimSpace(string(headOut))
+
+	atOrFrom := "at"
+	if headOid != detachedOid {
+		atOrFrom = "from"
+	}
+
+	// Try to find a friendly name (tag or branch) that points at detachedOid
+	name := friendlyRefName(detachedOid)
+
+	return "HEAD detached " + atOrFrom + " " + name
+}
+
+// friendlyRefName tries to describe an oid with a tag or branch name.
+// Falls back to the short hash.
+func friendlyRefName(oid string) string {
+	// Try describe --tags --exact-match first for tags
+	cmd := exec.Command("git", "-c", "core.fsmonitor=false", "describe", "--tags", "--exact-match", oid)
+	out, err := cmd.Output()
+	if err == nil {
+		return strings.TrimSpace(string(out))
+	}
+	// Try branch name via name-rev
+	cmd = exec.Command("git", "-c", "core.fsmonitor=false", "name-rev", "--name-only", "--no-undefined", "--refs=refs/heads/*", oid)
+	out, err = cmd.Output()
+	if err == nil {
+		name := strings.TrimSpace(string(out))
+		if name != "" && !strings.Contains(name, "~") && !strings.Contains(name, "^") {
+			return name
+		}
+	}
+	return shortOid(oid)
 }
 
 // gitRoot returns the root directory of the git repository
