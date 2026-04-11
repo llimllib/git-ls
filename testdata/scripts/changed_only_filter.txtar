@@ -1,0 +1,28 @@
+# --changed-only should only show files with git status changes
+env NO_COLOR=1
+env HOME=$WORK
+
+mkdir repo
+cd repo
+exec git init -b main
+exec git config user.email test@test.com
+exec git config user.name Test
+
+cp $WORK/files/clean.go clean.go
+cp $WORK/files/modified-v1.go modified.go
+exec git add .
+exec git commit -m 'initial commit'
+
+# Modify one file, leave the other untouched
+cp $WORK/files/modified-v2.go modified.go
+
+exec git-ls --changed-only
+stdout 'modified\.go'
+! stdout 'clean\.go'
+
+-- files/clean.go --
+package main
+-- files/modified-v1.go --
+package main // v1
+-- files/modified-v2.go --
+package main // v2

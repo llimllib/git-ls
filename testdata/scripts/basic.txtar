@@ -1,0 +1,26 @@
+# Basic git-ls should list current directory entries
+env NO_COLOR=1
+env HOME=$WORK
+
+mkdir repo
+cd repo
+exec git init -b main
+exec git config user.email test@test.com
+exec git config user.name Test
+
+cp $WORK/files/main.go main.go
+mkdir src
+cp $WORK/files/server.go src/server.go
+exec git add .
+exec git commit -m 'initial commit'
+
+exec git-ls
+stdout 'main\.go'
+# Directories should show as directory name, not expanded contents
+stdout '\\src'
+! stdout 'server\.go'
+
+-- files/main.go --
+package main
+-- files/server.go --
+package server

@@ -66,7 +66,7 @@ func (f *File) Name() string {
 	return f.name
 }
 
-const (
+var (
 	BLUE      = "\x1b[34m"
 	CYAN      = "\x1b[36m"
 	GREEN     = "\x1b[32m"
@@ -74,7 +74,21 @@ const (
 	RESET     = "\x1b[0m"
 	YELLOW    = "\x1b[33m"
 	STRIKEOUT = "\x1b[9m"
+	NOCOLOR   = false
 )
+
+func init() {
+	if _, ok := os.LookupEnv("NO_COLOR"); ok {
+		NOCOLOR = true
+		BLUE = ""
+		CYAN = ""
+		GREEN = ""
+		RED = ""
+		RESET = ""
+		YELLOW = ""
+		STRIKEOUT = ""
+	}
+}
 
 // validHashColors contains pre-computed 8-bit terminal color codes
 // from the 6x6x6 RGB cube (16-231), excluding colors that are too dark,
@@ -103,6 +117,10 @@ var validHashColors = []int{
 // hashToColor generates a color code for a commit hash.
 // It uses 8-bit terminal colors (\e[38;5;<n>m) from the pre-computed validHashColors.
 func hashToColor(hash string) string {
+	if NOCOLOR {
+		return ""
+	}
+
 	if hash == "" {
 		return CYAN
 	}
@@ -261,6 +279,10 @@ OPTIONS
 }
 
 func main() {
+	os.Exit(run())
+}
+
+func run() int {
 	argv := os.Args[1:]
 	diffWidth := 4
 	monoHash := false
@@ -271,11 +293,11 @@ func main() {
 	for len(argv) > 0 {
 		if argv[0] == "--version" {
 			printVersion()
-			os.Exit(0)
+			return 0
 		}
 		if argv[0] == "--help" || argv[0] == "-h" {
 			usage()
-			os.Exit(0)
+			return 0
 		}
 		if argv[0] == "--mono-hash" {
 			monoHash = true
@@ -292,7 +314,8 @@ func main() {
 					parts := strings.SplitN(argv[0], "=", 2)
 					diffWidth = must(strconv.Atoi(parts[1]))
 				} else {
-					log.Fatalf("--diffWidth requires an argument")
+					fmt.Fprintf(os.Stderr, "--diffWidth requires an argument\n")
+					return 1
 				}
 				argv = argv[1:]
 			} else {
@@ -305,7 +328,8 @@ func main() {
 					parts := strings.SplitN(argv[0], "=", 2)
 					formatColumns = parseFormat(parts[1])
 				} else {
-					log.Fatalf("--format requires an argument")
+					fmt.Fprintf(os.Stderr, "--format requires an argument\n")
+					return 1
 				}
 				argv = argv[1:]
 			} else {
@@ -326,25 +350,11 @@ func main() {
 		dir = argv[0]
 
 		if err := os.Chdir(dir); err != nil {
-			log.Fatalf("Failed to change directory to %s: %v", dir, err)
+			fmt.Fprintf(os.Stderr, "Failed to change directory to %s: %v\n", dir, err)
+			return 1
 		}
 	} else {
 		dir = "."
-	}
-
-	osfiles, err := os.ReadDir(".")
-	if err != nil {
-		log.Fatalf("Failed to read directory %s: %v", dir, err)
-	}
-
-	var files []*File
-	for _, file := range osfiles {
-		stat, _ := os.Stat(file.Name())
-		files = append(files, &File{
-			entry: file,
-			isDir: file.IsDir(),
-			isExe: !file.IsDir() && stat.Mode()&0o111 != 0,
-		})
 	}
 
 	// Fetch all git data in parallel
@@ -356,14 +366,20 @@ func main() {
 	// https://github.com/llimllib/git-ls/issues/34
 	resolved := must(filepath.EvalSymlinks(must(filepath.Abs("."))))
 	curdir := must(filepath.Rel(gitData.root, resolved))
-	fileStatus(gitData.status, files, curdir)
 
-	// Parse deleted files from git status and merge into file list
-	deletedFiles := parseDeletedFiles(gitData.status, curdir)
-	files = append(files, deletedFiles...)
-
+	var files []*File
 	if changedOnly {
-		files = changedFilesFilter(files)
+		// In --changed-only mode, build the file list directly from git
+		// status so we can show files from subdirectories with their full
+		// relative paths (e.g. "src/network/server.go" not just "src/")
+		files = changedFilesFromStatus(gitData.status, curdir)
+	} else {
+		var err error
+		files, err = filesFromCurDir(dir, gitData, curdir)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "%v\n", err)
+			return 1
+		}
 	}
 
 	// Now run git log on the files we'll show
@@ -403,12 +419,13 @@ func main() {
 
 	if debug {
 		for _, file := range filesNeedingLog {
-			log.Printf("%s,", file.Name())
+			fmt.Fprintf(os.Stderr, "%s,", file.Name())
 		}
 		fmt.Printf("\n")
 	}
 	if err := parseGitLog(filesNeedingLog); err != nil {
-		log.Fatalf("Error: git log streaming failed: %v", err)
+		fmt.Fprintf(os.Stderr, "Error: git log streaming failed: %v\n", err)
+		return 1
 	}
 	parseDiffStat(gitData.diffStat, files)
 
@@ -439,6 +456,7 @@ func main() {
 		NerdFont:  nerdFont,
 	}
 	showColumns(os.Stdout, maxWidth, files, rctx, formatColumns)
+	return 0
 }
 
 // changedFilesFilter strips unchanged files from the files to display
@@ -450,6 +468,92 @@ func changedFilesFilter(files []*File) []*File {
 		}
 	}
 	return changedFiles
+}
+
+// filesFromCurDir lists the files in the current directory. `dir` is the
+// directory as the user specified it, and `curdir` is the directory as we
+// resolved it from the git root
+func filesFromCurDir(dir string, gitData *gitResults, curdir string) ([]*File, error) {
+	var files []*File
+	osfiles, err := os.ReadDir(".")
+	if err != nil {
+		return nil, fmt.Errorf("failed to read directory %s: %v", dir, err)
+	}
+
+	for _, file := range osfiles {
+		stat, _ := os.Stat(file.Name())
+		files = append(files, &File{
+			entry: file,
+			isDir: file.IsDir(),
+			isExe: !file.IsDir() && stat.Mode()&0o111 != 0,
+		})
+	}
+
+	fileStatus(gitData.status, files, curdir)
+
+	// Parse deleted files from git status and merge into file list
+	deletedFiles := parseDeletedFiles(gitData.status, curdir)
+	return append(files, deletedFiles...), nil
+}
+
+// changedFilesFromStatus builds a list of changed File structs directly from
+// git status output. Unlike the normal flow (which reads the current directory
+// and then filters), this produces files with full relative paths so that
+// --changed-only can show files from subdirectories.
+func changedFilesFromStatus(status []byte, curdir string) []*File {
+	var files []*File
+	seen := make(map[string]bool)
+	for line := range strings.SplitSeq(string(status), "\n") {
+		if len(line) < 3 {
+			continue
+		}
+		statusCode := line[:2]
+		path := line[3:]
+
+		// Skip ignored files
+		if statusCode == "!!" {
+			continue
+		}
+
+		// For renames/copies, use the new name and record the old name
+		var oldName string
+		if (statusCode[0] == 'R' || statusCode[0] == 'C') && strings.Contains(path, " -> ") {
+			parts := strings.SplitN(path, " -> ", 2)
+			oldName = must(filepath.Rel(curdir, parts[0]))
+			path = parts[1]
+		}
+
+		relPath := must(filepath.Rel(curdir, path))
+
+		// Skip files outside the current directory (would start with "..")
+		if strings.HasPrefix(relPath, "..") {
+			continue
+		}
+
+		// Deduplicate (a file can appear in status with different codes)
+		if seen[relPath] {
+			continue
+		}
+		seen[relPath] = true
+
+		isDeleted := statusCode == " D" || statusCode == "D "
+		isExe := false
+		if !isDeleted {
+			if stat, err := os.Stat(relPath); err == nil {
+				isExe = !stat.IsDir() && stat.Mode()&0o111 != 0
+			}
+		}
+
+		file := &File{
+			name:      relPath,
+			status:    statusCode,
+			oldName:   oldName,
+			isDeleted: isDeleted,
+			isExe:     isExe,
+		}
+		files = append(files, file)
+	}
+	return files
 }
 
 func parseFormat(formatStr string) []Column {
@@ -956,12 +1060,24 @@ func parseGitLog(files []*File) error {
 			// This is a filename line
 			filename := strings.TrimSpace(line)
 
-			// Extract the first component (for directories)
-			// e.g., "builtin/add.c" -> "builtin", "main.go" -> "main.go"
-			firstPart := first(filename)
+			// Try to match the full path first (for --changed-only files
+			// with relative paths like "src/network/server.go"), then
+			// fall back to the first component (for directory-level
+			// matching in normal mode, e.g. "builtin/add.c" -> "builtin")
+			var file *File
+			var matchKey string
+			if f, ok := filesNeeded[filename]; ok {
+				file = f
+				matchKey = filename
+			} else {
+				firstPart := first(filename)
+				if f, ok := filesNeeded[firstPart]; ok {
+					file = f
+					matchKey = firstPart
+				}
+			}
 
-			// Check if this is a file/dir we're looking for
-			if file, needed := filesNeeded[firstPart]; needed {
+			if file != nil {
 				// Found it! Populate the file info
 				file.hash = currentCommit.hash
 				file.shortHash = currentCommit.shortHash
@@ -973,7 +1089,7 @@ func parseGitLog(files []*File) error {
 				// Remove from needed set. For renamed/copied files we
 				// may have two keys (old name + new name) pointing to
 				// the same File, so delete both.
-				delete(filesNeeded, firstPart)
+				delete(filesNeeded, matchKey)
 				if file.oldName != "" {
 					delete(filesNeeded, first(file.oldName))
 					delete(filesNeeded, file.Name())
@@ -1068,8 +1184,14 @@ func parseDiffStat(diffStat []byte, files []*File) {
 
 		plus := diffInt(parts[0])
 		minus := diffInt(parts[1])
-		path := first(strings.TrimSpace(parts[2]))
-		diffStats[path] = append(diffStats[path], Diff{plus, minus})
+		fullPath := strings.TrimSpace(parts[2])
+		d := Diff{plus, minus}
+		// Store under both the full relative path (for --changed-only) and
+		// the first component (for directory-level aggregation in normal mode)
+		diffStats[fullPath] = append(diffStats[fullPath], d)
+		if firstPart := first(fullPath); firstPart != fullPath {
+			diffStats[firstPart] = append(diffStats[firstPart], d)
+		}
 	}
 
 	for _, file := range files {
