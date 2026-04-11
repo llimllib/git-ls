@@ -362,15 +362,8 @@ func main() {
 	deletedFiles := parseDeletedFiles(gitData.status, curdir)
 	files = append(files, deletedFiles...)
 
-	// Filter to only changed files if requested
 	if changedOnly {
-		var changedFiles []*File
-		for _, file := range files {
-			if file.status != "" {
-				changedFiles = append(changedFiles, file)
-			}
-		}
-		files = changedFiles
+		files = changedFilesFilter(files)
 	}
 
 	// Now run git log on the files we'll show
@@ -446,6 +439,17 @@ func main() {
 		NerdFont:  nerdFont,
 	}
 	showColumns(os.Stdout, maxWidth, files, rctx, formatColumns)
+}
+
+// changedFilesFilter strips unchanged files from the files to display
+func changedFilesFilter(files []*File) []*File {
+	var changedFiles []*File
+	for _, file := range files {
+		if file.status != "" && file.status != "I" && file.status != "*" {
+			changedFiles = append(changedFiles, file)
+		}
+	}
+	return changedFiles
 }
 
 func parseFormat(formatStr string) []Column {
