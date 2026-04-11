@@ -827,17 +827,14 @@ func TestChangedOnly(t *testing.T) {
 		{entry: &mockDirEntry{name: "added.go"}, status: "A "},
 		{entry: &mockDirEntry{name: "another-clean.go"}, status: ""},
 		{name: "deleted.go", status: "D ", isDeleted: true},
+		{entry: &mockDirEntry{name: "ignored.log"}, status: "I"},
+		{entry: &mockDirEntry{name: ".git"}, status: "*"},
 	}
 
-	// Filter to only changed files (mimicking the --changed-only logic)
-	var changedFiles []*File
-	for _, file := range files {
-		if file.status != "" {
-			changedFiles = append(changedFiles, file)
-		}
-	}
+	// Filter to only changed files
+	changedFiles := changedFilesFilter(files)
 
-	// Verify we got only the files with status
+	// Verify we got only the files with status (ignored files excluded)
 	if len(changedFiles) != 4 {
 		t.Errorf("Expected 4 changed files, got %d", len(changedFiles))
 	}
