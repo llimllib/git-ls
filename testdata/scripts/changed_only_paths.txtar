@@ -1,0 +1,61 @@
+# --changed-only shows full relative paths for files in subdirectories
+env NO_COLOR=1
+env HOME=$WORK
+
+mkdir repo
+cd repo
+exec git init -b main
+exec git config user.email test@test.com
+exec git config user.name Test
+
+# Create files in nested directories
+mkdir src/network
+mkdir src/trimble
+cp $WORK/files/readme.txt README.md
+cp $WORK/files/server.txt src/network/server.go
+cp $WORK/files/tork.txt src/network/tork.go
+cp $WORK/files/alpha.txt src/trimble/alpha.go
+
+exec git add .
+exec git commit -m 'initial commit'
+
+# Modify files at different levels
+cp $WORK/files/modified-readme.txt README.md
+cp $WORK/files/modified-server.txt src/network/server.go
+cp $WORK/files/modified-tork.txt src/network/tork.go
+
+# From repo root, --changed-only should show full relative paths
+exec git-ls --changed-only
+stdout 'README\.md'
+stdout 'src/network/server\.go'
+stdout 'src/network/tork\.go'
+! stdout 'trimble'
+
+# From a subdirectory, only files at or below that dir should appear
+cd src
+exec git-ls --changed-only
+stdout 'network/server\.go'
+stdout 'network/tork\.go'
+! stdout 'README'
+! stdout 'trimble'
+
+# From a leaf directory, just basenames
+cd network
+exec git-ls --changed-only
+stdout '\\server\.go'
+stdout '\\tork\.go'
+
+-- files/readme.txt --
+# readme
+-- files/modified-readme.txt --
+# updated readme
+-- files/server.txt --
+package network
+-- files/modified-server.txt --
+package network // modified server
+-- files/tork.txt --
+package network
+-- files/modified-tork.txt --
+package network // modified tork
+-- files/alpha.txt --
+package trimble
