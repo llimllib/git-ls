@@ -25,3 +25,17 @@ In a properly-configured terminal, this means that you can click on filenames to
 ## building
 
 Run `make`, which will result in a `git-ls` binary in the current directory
+
+## changes only
+
+When `git-ls` is run with `-c` or `--changed-only`, it reports only the files that have changed, which makes it function similarly to `git status`
+
+![](static/gitls-c.png)
+
+## nerd font mode
+
+When `git-ls` is run with `--nerdfont`, it uses an experimental mode with icons replacing the traditional letters that `git status` uses to report modifications, additions, and ignored files:
+
+![](static/gitls-nerdfont.png)
+
+This is still very WIP, let me know if you like it or have suggestions for changes
