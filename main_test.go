@@ -728,7 +728,7 @@ func TestSubdirectoryGitInfo(t *testing.T) {
 	}
 
 	// Run parseGitLogStreaming to get git info
-	if err := parseGitLog(files); err != nil {
+	if err := parseGitLog(files, nil); err != nil {
 		t.Fatalf("parseGitLog failed: %v", err)
 	}
 
@@ -957,7 +957,7 @@ func TestUnmodifiedFileGetsGitInfo(t *testing.T) {
 		}
 	}
 
-	if err := parseGitLog(filesNeedingLog); err != nil {
+	if err := parseGitLog(filesNeedingLog, nil); err != nil {
 		t.Fatalf("parseGitLog failed: %v", err)
 	}
 
@@ -1108,7 +1108,7 @@ func TestRenamedFileGitInfo(t *testing.T) {
 	fileStatus(gitData.status, gitData.lsFiles, files, curdir)
 
 	// Run the streaming log — should find renamed files via their old name
-	if err := parseGitLog(files); err != nil {
+	if err := parseGitLog(files, nil); err != nil {
 		t.Fatalf("parseGitLog failed: %v", err)
 	}
 

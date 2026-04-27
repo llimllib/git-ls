@@ -61,13 +61,15 @@ type RenderContext struct {
 
 // DebugTimer tracks timing information for debug mode
 type DebugTimer struct {
-	timings map[string]time.Duration
-	mu      sync.Mutex
+	timings     map[string]time.Duration
+	fileTimings map[string]int // stores line counts for file lookups
+	mu          sync.Mutex
 }
 
 func newDebugTimer() *DebugTimer {
 	return &DebugTimer{
-		timings: make(map[string]time.Duration),
+		timings:     make(map[string]time.Duration),
+		fileTimings: make(map[string]int),
 	}
 }
 
@@ -112,6 +114,38 @@ func (dt *DebugTimer) print() {
 					}
 				}
 			}
+		}
+	}
+}
+
+// printDebugFileInfo prints debug information about file processing
+func printDebugFileInfo(timer *DebugTimer, files []*File) {
+	// Find the file that took the longest to find in git log
+	var slowestFile string
+	var slowestLines int
+	for fileName, lines := range timer.fileTimings {
+		if lines > slowestLines {
+			slowestFile = fileName
+			slowestLines = lines
+		}
+	}
+
+	if slowestFile != "" {
+		fmt.Fprintf(os.Stderr, "\nSlowest file to find: %s (%d lines)\n", slowestFile, slowestLines)
+	}
+
+	// Check for files that weren't found (no hash means not found in history)
+	var notFound []string
+	for _, file := range files {
+		if file.hash == "" {
+			notFound = append(notFound, file.Name())
+		}
+	}
+
+	if len(notFound) > 0 {
+		fmt.Fprintf(os.Stderr, "\nWarning: %d file(s) not found in git history (possibly beyond %s commit limit):\n", len(notFound), HistoryLimit)
+		for _, fileName := range notFound {
+			fmt.Fprintf(os.Stderr, "  - %s\n", fileName)
 		}
 	}
 }
@@ -361,6 +395,11 @@ OPTIONS
         filters out unmodified tracked files and shows only files with
         status indicators (modified, added, deleted, renamed, etc.)
 
+    --debug
+        Print debug timing information to stderr, including which file
+        took the longest to find in git history and warnings for files
+        not found (possibly beyond the history limit)
+
 %s
 `, link("https://github.com/llimllib/git-ls", "https://github.com/llimllib/git-ls"))
 }
@@ -530,7 +569,7 @@ func run() int {
 
 	if debug {
 		timer.time("parseGitLog", func() {
-			if err := parseGitLog(filesNeedingLog); err != nil {
+			if err := parseGitLog(filesNeedingLog, timer); err != nil {
 				fmt.Fprintf(os.Stderr, "Error: git log streaming failed: %v\n", err)
 			}
 		})
@@ -538,7 +577,7 @@ func run() int {
 			parseDiffStat(gitData.diffStat, files)
 		})
 	} else {
-		if err := parseGitLog(filesNeedingLog); err != nil {
+		if err := parseGitLog(filesNeedingLog, nil); err != nil {
 			fmt.Fprintf(os.Stderr, "Error: git log streaming failed: %v\n", err)
 			return 1
 		}
@@ -584,6 +623,7 @@ func run() int {
 			showColumns(os.Stdout, maxWidth, files, rctx, formatColumns)
 		})
 		timer.print()
+		printDebugFileInfo(timer, filesNeedingLog)
 	} else {
 		showColumns(os.Stdout, maxWidth, files, rctx, formatColumns)
 	}
@@ -1140,7 +1180,7 @@ func parseDeletedFiles(status []byte, curdir string) []*File {
 // 2. Early exit (stops when all files found)
 // 3. Walks history once (all files benefit from git's caching)
 // 4. Directory scoped (only checks current directory)
-func parseGitLog(files []*File) error {
+func parseGitLog(files []*File, timer *DebugTimer) error {
 	if len(files) == 0 {
 		return nil
 	}
@@ -1241,6 +1281,13 @@ func parseGitLog(files []*File) error {
 				file.author = currentCommit.author
 				file.authorEmail = currentCommit.authorEmail
 				file.message = currentCommit.message
+
+				// Track timing for this file if in debug mode
+				if timer != nil {
+					timer.mu.Lock()
+					timer.fileTimings[file.Name()] = linesSinceLastFind
+					timer.mu.Unlock()
+				}
 
 				// Remove from needed set. For renamed/copied files we
 				// may have two keys (old name + new name) pointing to
