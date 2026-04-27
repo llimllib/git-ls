@@ -545,7 +545,7 @@ func TestWorktreeWithSymlink(t *testing.T) {
 
 		// This should not panic
 		// We're testing the internal functions that were panicking
-		gitData := fetchGitData()
+		gitData := fetchGitData(nil)
 		curdir, err := filepath.Rel(gitData.root, must(filepath.Abs(".")))
 		if err != nil {
 			t.Fatalf("Failed to get curdir: %v", err)
@@ -597,7 +597,7 @@ func TestWorktreeWithSymlink(t *testing.T) {
 		}
 
 		// This should not panic
-		gitData := fetchGitData()
+		gitData := fetchGitData(nil)
 		curdir, err := filepath.Rel(gitData.root, must(filepath.Abs(".")))
 		if err != nil {
 			t.Fatalf("Failed to get curdir: %v", err)
@@ -920,7 +920,7 @@ func TestUnmodifiedFileGetsGitInfo(t *testing.T) {
 		})
 	}
 
-	gitData := fetchGitData()
+	gitData := fetchGitData(nil)
 	resolved := must(filepath.EvalSymlinks(must(filepath.Abs("."))))
 	curdir := must(filepath.Rel(gitData.root, resolved))
 	fileStatus(gitData.status, files, curdir)
@@ -1093,7 +1093,7 @@ func TestRenamedFileGitInfo(t *testing.T) {
 		})
 	}
 
-	gitData := fetchGitData()
+	gitData := fetchGitData(nil)
 	resolved := must(filepath.EvalSymlinks(must(filepath.Abs("."))))
 	curdir := must(filepath.Rel(gitData.root, resolved))
 	fileStatus(gitData.status, files, curdir)
