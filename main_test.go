@@ -150,7 +150,7 @@ func TestFileStatus(t *testing.T) {
 		},
 		{
 			name:   "multiple files with different statuses",
-			status: "M  file1.go\nA  file2.go\n!! ignored.go",
+			status: "M  file1.go\nA  file2.go",
 			files: []*File{
 				{entry: &mockDirEntry{name: "file1.go"}},
 				{entry: &mockDirEntry{name: "file2.go"}},
@@ -198,7 +198,16 @@ func TestFileStatus(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			fileStatus([]byte(tt.status), tt.files, tt.dir)
+			// Build lsFiles data: all files in status (except ignored/untracked) are tracked
+			var lsFilesBuilder strings.Builder
+			for i, f := range tt.files {
+				// Files with status in git (not ignored, not untracked) are tracked
+				if tt.expected[i] != "I" && tt.expected[i] != "??" && f.entry != nil && f.entry.Name() != ".git" {
+					lsFilesBuilder.WriteString(f.entry.Name())
+					lsFilesBuilder.WriteString("\n")
+				}
+			}
+			fileStatus([]byte(tt.status), []byte(lsFilesBuilder.String()), tt.files, tt.dir)
 			for i, f := range tt.files {
 				if f.status != tt.expected[i] {
 					t.Errorf("expected status %q for %s, got %q", tt.expected[i], f.entry.Name(), f.status)
@@ -567,7 +576,7 @@ func TestWorktreeWithSymlink(t *testing.T) {
 		}
 
 		// This was panicking before the fix
-		fileStatus(gitData.status, files, curdir)
+		fileStatus(gitData.status, gitData.lsFiles, files, curdir)
 
 		// Verify we found the untracked file
 		found := false
@@ -619,7 +628,7 @@ func TestWorktreeWithSymlink(t *testing.T) {
 		}
 
 		// This was panicking before the fix
-		fileStatus(gitData.status, files, curdir)
+		fileStatus(gitData.status, gitData.lsFiles, files, curdir)
 
 		// Verify we found the untracked file
 		found := false
@@ -923,7 +932,7 @@ func TestUnmodifiedFileGetsGitInfo(t *testing.T) {
 	gitData := fetchGitData(nil)
 	resolved := must(filepath.EvalSymlinks(must(filepath.Abs("."))))
 	curdir := must(filepath.Rel(gitData.root, resolved))
-	fileStatus(gitData.status, files, curdir)
+	fileStatus(gitData.status, gitData.lsFiles, files, curdir)
 
 	// Replicate the filesNeedingLog filter from main() — this is the code under test
 	var filesNeedingLog []*File
@@ -1096,7 +1105,7 @@ func TestRenamedFileGitInfo(t *testing.T) {
 	gitData := fetchGitData(nil)
 	resolved := must(filepath.EvalSymlinks(must(filepath.Abs("."))))
 	curdir := must(filepath.Rel(gitData.root, resolved))
-	fileStatus(gitData.status, files, curdir)
+	fileStatus(gitData.status, gitData.lsFiles, files, curdir)
 
 	// Run the streaming log — should find renamed files via their old name
 	if err := parseGitLog(files); err != nil {
@@ -1264,4 +1273,133 @@ func TestHeadDescription(t *testing.T) {
 			t.Fatalf("expected rebase message, got %q", desc)
 		}
 	})
+}
+
+// TestSubdirectoryTrackedFiles tests that tracked files in subdirectories
+// are correctly identified (not marked as ignored). This is a regression test
+// for the bug where git ls-files output wasn't correctly matched against files.
+func TestSubdirectoryTrackedFiles(t *testing.T) {
+	// Create a temporary directory for our test
+	tmpDir := t.TempDir()
+
+	repoDir := tmpDir + "/repo"
+	if err := os.Mkdir(repoDir, 0o755); err != nil {
+		t.Fatalf("Failed to create repo dir: %v", err)
+	}
+
+	// Initialize git repo
+	if err := runCmd(repoDir, "git", "init", "-b", "main"); err != nil {
+		t.Fatalf("Failed to init repo: %v", err)
+	}
+	if err := runCmd(repoDir, "git", "config", "user.email", "test@example.com"); err != nil {
+		t.Fatalf("Failed to set git email: %v", err)
+	}
+	if err := runCmd(repoDir, "git", "config", "user.name", "Test User"); err != nil {
+		t.Fatalf("Failed to set git name: %v", err)
+	}
+
+	// Create a subdirectory with files
+	subDir := repoDir + "/docs"
+	if err := os.Mkdir(subDir, 0o755); err != nil {
+		t.Fatalf("Failed to create subdir: %v", err)
+	}
+
+	// Create a tracked file
+	if err := os.WriteFile(subDir+"/tracked.md", []byte("# Tracked"), 0o644); err != nil {
+		t.Fatalf("Failed to write tracked file: %v", err)
+	}
+
+	// Create .gitignore to ignore a directory
+	if err := os.WriteFile(repoDir+"/.gitignore", []byte("node_modules/\n"), 0o644); err != nil {
+		t.Fatalf("Failed to write .gitignore: %v", err)
+	}
+
+	// Commit the tracked file
+	if err := runCmd(repoDir, "git", "add", "."); err != nil {
+		t.Fatalf("Failed to add files: %v", err)
+	}
+	if err := runCmd(repoDir, "git", "commit", "-m", "Initial commit"); err != nil {
+		t.Fatalf("Failed to commit: %v", err)
+	}
+
+	// Create an ignored directory in the subdirectory
+	ignoreDir := subDir + "/node_modules"
+	if err := os.Mkdir(ignoreDir, 0o755); err != nil {
+		t.Fatalf("Failed to create ignored dir: %v", err)
+	}
+	if err := os.WriteFile(ignoreDir+"/package.js", []byte("// code"), 0o644); err != nil {
+		t.Fatalf("Failed to write ignored file: %v", err)
+	}
+
+	// Create an untracked file
+	if err := os.WriteFile(subDir+"/untracked.md", []byte("# Untracked"), 0o644); err != nil {
+		t.Fatalf("Failed to write untracked file: %v", err)
+	}
+
+	// Change to the subdirectory (simulating: git-ls docs)
+	oldDir, _ := os.Getwd()
+	defer func() {
+		if err := os.Chdir(oldDir); err != nil {
+			t.Logf("Failed to restore directory: %v", err)
+		}
+	}()
+
+	if err := os.Chdir(subDir); err != nil {
+		t.Fatalf("Failed to chdir to subdirectory: %v", err)
+	}
+
+	// Fetch git data
+	gitData := fetchGitData(nil)
+
+	// Resolve current directory relative to git root
+	resolved := must(filepath.EvalSymlinks(must(filepath.Abs("."))))
+	curdir := must(filepath.Rel(gitData.root, resolved))
+
+	// Read the files in the subdirectory
+	osfiles, err := os.ReadDir(".")
+	if err != nil {
+		t.Fatalf("Failed to read directory: %v", err)
+	}
+
+	var files []*File
+	for _, file := range osfiles {
+		stat, _ := os.Stat(file.Name())
+		files = append(files, &File{
+			entry: file,
+			isDir: file.IsDir(),
+			isExe: !file.IsDir() && stat.Mode()&0o111 != 0,
+		})
+	}
+
+	// Apply file status
+	fileStatus(gitData.status, gitData.lsFiles, files, curdir)
+
+	// Check each file's status
+	fileStatuses := make(map[string]string)
+	for _, f := range files {
+		fileStatuses[f.Name()] = f.status
+	}
+
+	// Verify tracked.md is NOT marked as ignored
+	if status, ok := fileStatuses["tracked.md"]; !ok {
+		t.Error("tracked.md not found in file list")
+	} else if status == "I" {
+		t.Errorf("tracked.md incorrectly marked as ignored (status=%q)", status)
+	} else if status != "" {
+		t.Errorf("tracked.md should have empty status (unmodified tracked file), got %q", status)
+	}
+
+	// Verify untracked.md is marked as untracked
+	if status, ok := fileStatuses["untracked.md"]; !ok {
+		t.Error("untracked.md not found in file list")
+	} else if status != "??" {
+		t.Errorf("untracked.md should be marked as untracked (??), got %q", status)
+	}
+
+	// Verify node_modules is marked as ignored
+	if status, ok := fileStatuses["node_modules"]; !ok {
+		t.Error("node_modules not found in file list")
+	} else if status != "I" {
+		t.Errorf("node_modules should be marked as ignored (I), got %q", status)
+	}
 }

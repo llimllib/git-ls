@@ -1,0 +1,50 @@
+# Test that tracked files in subdirectories are not marked as ignored
+# This is a regression test for a bug where git ls-files output wasn't
+# correctly matched against files when running from a subdirectory
+env NO_COLOR=1
+env HOME=$WORK
+
+mkdir repo
+cd repo
+exec git init -b main
+exec git config user.email test@test.com
+exec git config user.name Test
+
+# Create a .gitignore
+cp $WORK/files/.gitignore .gitignore
+
+# Create docs subdirectory with tracked and ignored files
+mkdir docs
+cp $WORK/files/tracked.md docs/tracked.md
+exec git add .
+exec git commit -m 'initial commit'
+
+# Create ignored directory and untracked file in docs/
+mkdir docs/node_modules
+cp $WORK/files/package.js docs/node_modules/package.js
+cp $WORK/files/untracked.md docs/untracked.md
+
+# Run git-ls from the docs subdirectory
+cd docs
+exec git-ls
+
+# Tracked file should show with commit info (not marked as ignored)
+stdout 'tracked\.md.*initial commit'
+
+# Untracked file should show with ?? status
+stdout '\?\?.*untracked\.md'
+
+# Ignored directory should show with I status
+stdout 'I.*node_modules'
+
+# Verify tracked.md is NOT marked as ignored
+! stdout 'I.*tracked\.md'
+
+-- files/.gitignore --
+node_modules/
+-- files/tracked.md --
+# Tracked Documentation
+-- files/untracked.md --
+# Untracked Documentation
+-- files/package.js --
+// package code
