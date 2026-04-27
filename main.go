@@ -208,7 +208,8 @@ type gitResults struct {
 	diffStat      []byte
 	currentBranch string
 	remotes       []byte
-	isEmpty       bool // true if repo has no commits yet
+	lsFiles       []byte // tracked files from git ls-files
+	isEmpty       bool   // true if repo has no commits yet
 }
 
 // isEmptyRepo checks if the repository has no commits yet by verifying if HEAD
@@ -267,6 +268,14 @@ func fetchGitData(timer *DebugTimer) *gitResults {
 		results.remotes = gitRemotes()
 		if timer != nil {
 			timer.record("  gitRemotes", time.Since(start))
+		}
+	})
+
+	wg.Go(func() {
+		start := time.Now()
+		results.lsFiles = gitLsFiles()
+		if timer != nil {
+			timer.record("  gitLsFiles", time.Since(start))
 		}
 	})
 
@@ -611,7 +620,7 @@ func filesFromCurDir(dir string, gitData *gitResults, curdir string) ([]*File, e
 		})
 	}
 
-	fileStatus(gitData.status, files, curdir)
+	fileStatus(gitData.status, gitData.lsFiles, files, curdir)
 
 	// Parse deleted files from git status and merge into file list
 	deletedFiles := parseDeletedFiles(gitData.status, curdir)
@@ -1018,7 +1027,7 @@ func gitRoot() string {
 // gitStatus accepts a dir and a slice of files, and adds the git status to
 // each file in place
 func gitStatus() []byte {
-	cmd := exec.Command("git", "-c", "core.fsmonitor=false", "status", "--porcelain", "--ignored")
+	cmd := exec.Command("git", "-c", "core.fsmonitor=false", "status", "--porcelain")
 	out, err := cmd.Output()
 	if err != nil {
 		log.Fatalf("Failed to get git status: %v", err)
@@ -1026,7 +1035,30 @@ func gitStatus() []byte {
 	return out
 }
 
-func fileStatus(status []byte, files []*File, curdir string) {
+// gitLsFiles returns all tracked files
+func gitLsFiles() []byte {
+	cmd := exec.Command("git", "-c", "core.fsmonitor=false", "ls-files")
+	out, err := cmd.Output()
+	if err != nil {
+		log.Fatalf("Failed to get git ls-files: %v", err)
+	}
+	return out
+}
+
+func fileStatus(status []byte, lsFiles []byte, files []*File, curdir string) {
+	// Build map of tracked files (from git ls-files)
+	// Note: git ls-files is run from the current directory, so paths are relative to cwd
+	trackedFiles := make(map[string]bool)
+	for line := range strings.SplitSeq(string(lsFiles), "\n") {
+		if line != "" {
+			// git ls-files returns paths relative to current directory
+			// For files in subdirectories, we only care about the first component
+			// e.g. "subdir/file.txt" -> "subdir"
+			fileName := first(line)
+			trackedFiles[fileName] = true
+		}
+	}
+
 	gitStatusMap := make(map[string][]string)
 	// oldNameMap tracks the old (pre-rename) path for renamed/copied files,
 	// keyed by the new filename. This is needed so git log can look up
@@ -1053,9 +1085,6 @@ func fileStatus(status []byte, files []*File, curdir string) {
 				path = parts[1]
 			}
 			fileName := first(must(filepath.Rel(curdir, path)))
-			if status == "!!" {
-				status = "I"
-			}
 			gitStatusMap[fileName] = append(gitStatusMap[fileName], status)
 		}
 	}
@@ -1064,6 +1093,9 @@ func fileStatus(status []byte, files []*File, curdir string) {
 		if fileStatus, ok := gitStatusMap[file.Name()]; ok {
 			slices.Sort(fileStatus)
 			file.status = strings.Join(slices.Compact(fileStatus), ",")
+		} else if !trackedFiles[file.Name()] && file.Name() != ".git" {
+			// File exists in filesystem but is not tracked and not in status = ignored
+			file.status = "I"
 		}
 		if oldName, ok := oldNameMap[file.Name()]; ok {
 			file.oldName = oldName
