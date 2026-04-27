@@ -19,9 +19,13 @@ lint:
 	fi
 	golangci-lint run
 
+.PHONY: test
+test:
+	go test ./...
+
 .PHONY: publish
 publish:
-	make lint && go test && bin/release.sh
+	make lint test && bin/release.sh
 
 _site/index.html: README.md $(TRANSCRIPTS) $(STATIC)
 	@./tools/build-site.sh
