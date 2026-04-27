@@ -15,6 +15,7 @@ import (
 	"strings"
 	"sync"
 	"syscall"
+	"time"
 	"unsafe"
 
 	"github.com/mattn/go-runewidth"
@@ -56,6 +57,63 @@ type RenderContext struct {
 	Dir       string
 	MonoHash  bool
 	NerdFont  bool
+}
+
+// DebugTimer tracks timing information for debug mode
+type DebugTimer struct {
+	timings map[string]time.Duration
+	mu      sync.Mutex
+}
+
+func newDebugTimer() *DebugTimer {
+	return &DebugTimer{
+		timings: make(map[string]time.Duration),
+	}
+}
+
+func (dt *DebugTimer) time(name string, fn func()) {
+	start := time.Now()
+	fn()
+	elapsed := time.Since(start)
+	dt.mu.Lock()
+	dt.timings[name] = elapsed
+	dt.mu.Unlock()
+}
+
+func (dt *DebugTimer) record(name string, duration time.Duration) {
+	dt.mu.Lock()
+	dt.timings[name] = duration
+	dt.mu.Unlock()
+}
+
+func (dt *DebugTimer) print() {
+	fmt.Fprintf(os.Stderr, "\nDebug Timings:\n")
+
+	// Define the order we want to print top-level timings
+	topLevelOrder := []string{
+		"fetchGitData",
+		"filesFromCurDir",
+		"changedFilesFromStatus",
+		"parseGitLog",
+		"parseDiffStat",
+		"makeDiffGraph",
+		"showColumns",
+	}
+
+	// Print each top-level timing
+	for _, name := range topLevelOrder {
+		if duration, ok := dt.timings[name]; ok {
+			fmt.Fprintf(os.Stderr, "  %s: %v\n", name, duration)
+			// If this is fetchGitData, print its nested timings
+			if name == "fetchGitData" {
+				for childName, childDuration := range dt.timings {
+					if stripped, ok := strings.CutPrefix(childName, "  "); ok {
+						fmt.Fprintf(os.Stderr, "    %s: %v\n", stripped, childDuration)
+					}
+				}
+			}
+		}
+	}
 }
 
 // Name returns the file name, either from the DirEntry or the name field
@@ -175,25 +233,41 @@ func isEmptyRepo() bool {
 }
 
 // fetchGitData runs all independent git commands in parallel and returns the results
-func fetchGitData() *gitResults {
+func fetchGitData(timer *DebugTimer) *gitResults {
 	results := &gitResults{}
 
 	var wg sync.WaitGroup
 
 	wg.Go(func() {
+		start := time.Now()
 		results.root = gitRoot()
+		if timer != nil {
+			timer.record("  gitRoot", time.Since(start))
+		}
 	})
 
 	wg.Go(func() {
+		start := time.Now()
 		results.status = gitStatus()
+		if timer != nil {
+			timer.record("  gitStatus", time.Since(start))
+		}
 	})
 
 	wg.Go(func() {
+		start := time.Now()
 		results.currentBranch = headDescription()
+		if timer != nil {
+			timer.record("  headDescription", time.Since(start))
+		}
 	})
 
 	wg.Go(func() {
+		start := time.Now()
 		results.remotes = gitRemotes()
+		if timer != nil {
+			timer.record("  gitRemotes", time.Since(start))
+		}
 	})
 
 	// No diff stats in empty repo
@@ -202,7 +276,11 @@ func fetchGitData() *gitResults {
 		results.diffStat = []byte{}
 	} else {
 		wg.Go(func() {
+			start := time.Now()
 			results.diffStat = gitDiffStat()
+			if timer != nil {
+				timer.record("  gitDiffStat", time.Since(start))
+			}
 		})
 	}
 
@@ -358,7 +436,19 @@ func run() int {
 	}
 
 	// Fetch all git data in parallel
-	gitData := fetchGitData()
+	var timer *DebugTimer
+	if debug {
+		timer = newDebugTimer()
+	}
+
+	var gitData *gitResults
+	if debug {
+		timer.time("fetchGitData", func() {
+			gitData = fetchGitData(timer)
+		})
+	} else {
+		gitData = fetchGitData(nil)
+	}
 
 	// Resolve symlinks to match git's perspective. Git internally resolves
 	// symlinks when working with worktrees, so we need to do the same to
@@ -372,10 +462,22 @@ func run() int {
 		// In --changed-only mode, build the file list directly from git
 		// status so we can show files from subdirectories with their full
 		// relative paths (e.g. "src/network/server.go" not just "src/")
-		files = changedFilesFromStatus(gitData.status, curdir)
+		if debug {
+			timer.time("changedFilesFromStatus", func() {
+				files = changedFilesFromStatus(gitData.status, curdir)
+			})
+		} else {
+			files = changedFilesFromStatus(gitData.status, curdir)
+		}
 	} else {
 		var err error
-		files, err = filesFromCurDir(dir, gitData, curdir)
+		if debug {
+			timer.time("filesFromCurDir", func() {
+				files, err = filesFromCurDir(dir, gitData, curdir)
+			})
+		} else {
+			files, err = filesFromCurDir(dir, gitData, curdir)
+		}
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "%v\n", err)
 			return 1
@@ -418,20 +520,33 @@ func run() int {
 	}
 
 	if debug {
-		for _, file := range filesNeedingLog {
-			fmt.Fprintf(os.Stderr, "%s,", file.Name())
+		timer.time("parseGitLog", func() {
+			if err := parseGitLog(filesNeedingLog); err != nil {
+				fmt.Fprintf(os.Stderr, "Error: git log streaming failed: %v\n", err)
+			}
+		})
+		timer.time("parseDiffStat", func() {
+			parseDiffStat(gitData.diffStat, files)
+		})
+	} else {
+		if err := parseGitLog(filesNeedingLog); err != nil {
+			fmt.Fprintf(os.Stderr, "Error: git log streaming failed: %v\n", err)
+			return 1
 		}
-		fmt.Printf("\n")
+		parseDiffStat(gitData.diffStat, files)
 	}
-	if err := parseGitLog(filesNeedingLog); err != nil {
-		fmt.Fprintf(os.Stderr, "Error: git log streaming failed: %v\n", err)
-		return 1
-	}
-	parseDiffStat(gitData.diffStat, files)
 
 	// generate a diffStat graph for every file
-	for _, file := range files {
-		file.diffStat = makeDiffGraph(file, diffWidth)
+	if debug {
+		timer.time("makeDiffGraph", func() {
+			for _, file := range files {
+				file.diffStat = makeDiffGraph(file, diffWidth)
+			}
+		})
+	} else {
+		for _, file := range files {
+			file.diffStat = makeDiffGraph(file, diffWidth)
+		}
 	}
 
 	// Sort files by name
@@ -455,7 +570,14 @@ func run() int {
 		MonoHash:  monoHash,
 		NerdFont:  nerdFont,
 	}
-	showColumns(os.Stdout, maxWidth, files, rctx, formatColumns)
+	if debug {
+		timer.time("showColumns", func() {
+			showColumns(os.Stdout, maxWidth, files, rctx, formatColumns)
+		})
+		timer.print()
+	} else {
+		showColumns(os.Stdout, maxWidth, files, rctx, formatColumns)
+	}
 	return 0
 }
 
