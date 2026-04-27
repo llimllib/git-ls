@@ -1116,11 +1116,13 @@ func parseDeletedFiles(status []byte, curdir string) []*File {
 			statusCode := line[:2]
 			// " D" means deleted in worktree, "D " means staged deletion
 			if statusCode == " D" || statusCode == "D " {
-				fileName := first(must(filepath.Rel(curdir, line[3:])))
-				// Only include files in current directory (not ".." for parent dirs)
-				if fileName != ".." && !strings.Contains(fileName, string(os.PathSeparator)) {
+				// Get the full relative path first
+				relPath := must(filepath.Rel(curdir, line[3:]))
+				// Only include files directly in current directory
+				// (not ".." for parent dirs, and no path separators for subdirs)
+				if relPath != ".." && !strings.Contains(relPath, string(os.PathSeparator)) {
 					deletedFiles = append(deletedFiles, &File{
-						name:      fileName,
+						name:      relPath,
 						status:    statusCode,
 						isDeleted: true,
 					})

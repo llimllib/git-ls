@@ -1,0 +1,48 @@
+# Test that deleting a file in a subdirectory doesn't create duplicate directory entries
+# This is a regression test for the bug where core/query_builder/tasks.py deletion
+# would cause 'core' to appear twice in the output (once as modified, once as deleted)
+env NO_COLOR=1
+env HOME=$WORK
+
+mkdir repo
+cd repo
+exec git init -b main
+exec git config user.email test@test.com
+exec git config user.name Test
+
+# Create a directory structure with nested files
+mkdir core
+mkdir core/query_builder
+cp $WORK/files/apps.py core/apps.py
+cp $WORK/files/tasks.py core/query_builder/tasks.py
+cp $WORK/files/init.py core/query_builder/__init__.py
+exec git add .
+exec git commit -m 'initial commit'
+
+# Delete a file in the subdirectory
+rm core/query_builder/tasks.py
+
+# Modify another file to create mixed status
+cp $WORK/files/apps_modified.py core/apps.py
+
+# Run git-ls and verify 'core' appears only once
+exec git-ls
+stdout 'D, M.*core'
+
+# Count how many times 'core' appears in output (should be exactly 1)
+# We use grep -c which will exit 1 if count is 0, but that's expected in some cases
+# The important thing is that we don't see 'core' twice
+exec sh -c 'git-ls | grep -c "core" || true'
+stdout '^1$'
+
+# Verify no standalone deleted 'core' entry with just 'D' status
+! exec sh -c 'git-ls | grep -E "^\\s*D\\s+.*core"'
+
+-- files/apps.py --
+# apps
+-- files/tasks.py --
+# tasks
+-- files/init.py --
+# init
+-- files/apps_modified.py --
+# apps modified

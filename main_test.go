@@ -1275,6 +1275,100 @@ func TestHeadDescription(t *testing.T) {
 	})
 }
 
+// TestDeletedFilesInSubdirectory tests that when a file in a subdirectory is
+// deleted (e.g., core/query_builder/tasks.py), we don't incorrectly create a
+// deleted entry for the parent directory (e.g., "core"). This is a regression
+// test for a bug where parseDeletedFiles would use first() before checking if
+// the path contained separators, causing it to treat subdirectory deletions as
+// if the parent directory itself was deleted.
+func TestDeletedFilesInSubdirectory(t *testing.T) {
+	tmpDir := t.TempDir()
+	repoDir := tmpDir + "/repo"
+	if err := os.Mkdir(repoDir, 0o755); err != nil {
+		t.Fatalf("Failed to create repo dir: %v", err)
+	}
+
+	// Initialize git repo
+	if err := runCmd(repoDir, "git", "init", "-b", "main"); err != nil {
+		t.Fatalf("Failed to init repo: %v", err)
+	}
+	if err := runCmd(repoDir, "git", "config", "user.email", "test@example.com"); err != nil {
+		t.Fatalf("Failed to set git email: %v", err)
+	}
+	if err := runCmd(repoDir, "git", "config", "user.name", "Test User"); err != nil {
+		t.Fatalf("Failed to set git name: %v", err)
+	}
+
+	// Create a directory structure with files
+	subDir := repoDir + "/core"
+	if err := os.Mkdir(subDir, 0o755); err != nil {
+		t.Fatalf("Failed to create subdir: %v", err)
+	}
+	subSubDir := subDir + "/query_builder"
+	if err := os.Mkdir(subSubDir, 0o755); err != nil {
+		t.Fatalf("Failed to create sub-subdir: %v", err)
+	}
+
+	// Create files in the structure
+	if err := os.WriteFile(subDir+"/apps.py", []byte("# apps"), 0o644); err != nil {
+		t.Fatalf("Failed to write apps.py: %v", err)
+	}
+	if err := os.WriteFile(subSubDir+"/tasks.py", []byte("# tasks"), 0o644); err != nil {
+		t.Fatalf("Failed to write tasks.py: %v", err)
+	}
+	if err := os.WriteFile(subSubDir+"/__init__.py", []byte("# init"), 0o644); err != nil {
+		t.Fatalf("Failed to write __init__.py: %v", err)
+	}
+
+	// Commit all files
+	if err := runCmd(repoDir, "git", "add", "."); err != nil {
+		t.Fatalf("Failed to add files: %v", err)
+	}
+	if err := runCmd(repoDir, "git", "commit", "-m", "Initial commit"); err != nil {
+		t.Fatalf("Failed to commit: %v", err)
+	}
+
+	// Delete a file in the subdirectory
+	if err := os.Remove(subSubDir + "/tasks.py"); err != nil {
+		t.Fatalf("Failed to delete tasks.py: %v", err)
+	}
+
+	// Modify another file to create mixed status
+	if err := os.WriteFile(subDir+"/apps.py", []byte("# apps modified"), 0o644); err != nil {
+		t.Fatalf("Failed to modify apps.py: %v", err)
+	}
+
+	// Change to the repo directory
+	oldDir, _ := os.Getwd()
+	defer func() {
+		if err := os.Chdir(oldDir); err != nil {
+			t.Logf("Failed to restore directory: %v", err)
+		}
+	}()
+
+	if err := os.Chdir(repoDir); err != nil {
+		t.Fatalf("Failed to chdir to repo: %v", err)
+	}
+
+	// Fetch git status
+	gitData := fetchGitData(nil)
+
+	// Parse deleted files (this is where the bug was)
+	deletedFiles := parseDeletedFiles(gitData.status, ".")
+
+	// Verify we DON'T have a deleted entry for "core"
+	for _, f := range deletedFiles {
+		if f.Name() == "core" {
+			t.Errorf("parseDeletedFiles incorrectly created a deleted entry for 'core' directory when only core/query_builder/tasks.py was deleted")
+		}
+	}
+
+	// We also shouldn't have any deleted files since the deleted file is in a subdirectory
+	if len(deletedFiles) != 0 {
+		t.Errorf("Expected no deleted files in root directory, but got %d: %v", len(deletedFiles), deletedFiles)
+	}
+}
+
 // TestSubdirectoryTrackedFiles tests that tracked files in subdirectories
 // are correctly identified (not marked as ignored). This is a regression test
 // for the bug where git ls-files output wasn't correctly matched against files.
