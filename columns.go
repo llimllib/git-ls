@@ -213,7 +213,7 @@ func calculateColumnWidths(files []*File, columns []Column, rctx *RenderContext)
 }
 
 // renderStatus renders the status column
-func renderStatus(out io.Writer, file *File, maxWidth int, rctx *RenderContext) {
+func renderStatus(out io.Writer, file *File, maxWidth int, rctx *RenderContext, isLast bool) {
 	if maxWidth > 0 {
 		var statusStr string
 		if rctx.NerdFont {
@@ -227,21 +227,24 @@ func renderStatus(out io.Writer, file *File, maxWidth int, rctx *RenderContext) 
 			must(fmt.Fprintf(out, " "))
 		}
 		must(fmt.Fprintf(out, "%s", statusStr))
+		// No right padding needed for status since it's right-aligned
 	}
 }
 
 // renderDiff renders the diff graph column
-func renderDiff(out io.Writer, file *File, maxWidth int, rctx *RenderContext) {
+func renderDiff(out io.Writer, file *File, maxWidth int, rctx *RenderContext, isLast bool) {
 	if maxWidth > 0 {
 		must(fmt.Fprintf(out, "%s", file.diffStat))
-		for i := 0; i < maxWidth-width(file.diffStat); i++ {
-			must(fmt.Fprintf(out, " "))
+		if !isLast {
+			for i := 0; i < maxWidth-width(file.diffStat); i++ {
+				must(fmt.Fprintf(out, " "))
+			}
 		}
 	}
 }
 
 // renderFilename renders the filename column with colors and hyperlinks
-func renderFilename(out io.Writer, file *File, maxWidth int, rctx *RenderContext) {
+func renderFilename(out io.Writer, file *File, maxWidth int, rctx *RenderContext, isLast bool) {
 	if file.isDeleted {
 		must(fmt.Fprintf(out, "%s%s", RED, STRIKEOUT))
 	} else if file.isDir {
@@ -258,9 +261,11 @@ func renderFilename(out io.Writer, file *File, maxWidth int, rctx *RenderContext
 		must(fmt.Fprintf(out, "%s", link(fileURL, file.Name())))
 	}
 
-	// pad spaces to the right up to maxWidth
-	for i := 0; i < maxWidth-width(file.Name()); i++ {
-		must(fmt.Fprintf(out, " "))
+	// pad spaces to the right up to maxWidth (unless this is the last column)
+	if !isLast {
+		for i := 0; i < maxWidth-width(file.Name()); i++ {
+			must(fmt.Fprintf(out, " "))
+		}
 	}
 
 	// reset color for dir/exe but not deleted (strikethrough continues)
@@ -270,7 +275,7 @@ func renderFilename(out io.Writer, file *File, maxWidth int, rctx *RenderContext
 }
 
 // renderShorthash renders the short commit hash
-func renderShorthash(out io.Writer, file *File, maxWidth int, rctx *RenderContext) {
+func renderShorthash(out io.Writer, file *File, maxWidth int, rctx *RenderContext, isLast bool) {
 	if maxWidth > 0 {
 		shortHash := file.shortHash
 		shortHashWidth := min(width(shortHash), maxWidth)
@@ -288,15 +293,17 @@ func renderShorthash(out io.Writer, file *File, maxWidth int, rctx *RenderContex
 			must(fmt.Fprintf(out, "%s%s%s", color, shortHash[:min(len(shortHash), maxWidth)], RESET))
 		}
 
-		// pad spaces to the right up to maxWidth
-		for i := 0; i < maxWidth-shortHashWidth; i++ {
-			must(fmt.Fprintf(out, " "))
+		// pad spaces to the right up to maxWidth (unless this is the last column)
+		if !isLast {
+			for i := 0; i < maxWidth-shortHashWidth; i++ {
+				must(fmt.Fprintf(out, " "))
+			}
 		}
 	}
 }
 
 // renderHash renders the full commit hash
-func renderHash(out io.Writer, file *File, maxWidth int, rctx *RenderContext) {
+func renderHash(out io.Writer, file *File, maxWidth int, rctx *RenderContext, isLast bool) {
 	if maxWidth > 0 {
 		var color string
 		if rctx.MonoHash {
@@ -311,24 +318,28 @@ func renderHash(out io.Writer, file *File, maxWidth int, rctx *RenderContext) {
 			must(fmt.Fprintf(out, "%s%s%s", color, file.hash, RESET))
 		}
 
-		// pad spaces to the right up to maxWidth
-		for i := 0; i < maxWidth-width(file.hash); i++ {
-			must(fmt.Fprintf(out, " "))
+		// pad spaces to the right up to maxWidth (unless this is the last column)
+		if !isLast {
+			for i := 0; i < maxWidth-width(file.hash); i++ {
+				must(fmt.Fprintf(out, " "))
+			}
 		}
 	}
 }
 
 // renderDate renders the date column
-func renderDate(out io.Writer, file *File, maxWidth int, rctx *RenderContext) {
+func renderDate(out io.Writer, file *File, maxWidth int, rctx *RenderContext, isLast bool) {
 	must(fmt.Fprintf(out, "%s", file.lastModified))
-	// pad spaces to the right up to maxWidth
-	for i := 0; i < maxWidth-width(file.lastModified); i++ {
-		must(fmt.Fprintf(out, " "))
+	// pad spaces to the right up to maxWidth (unless this is the last column)
+	if !isLast {
+		for i := 0; i < maxWidth-width(file.lastModified); i++ {
+			must(fmt.Fprintf(out, " "))
+		}
 	}
 }
 
 // renderAuthor renders the author column with hyperlinks
-func renderAuthor(out io.Writer, file *File, maxWidth int, rctx *RenderContext) {
+func renderAuthor(out io.Writer, file *File, maxWidth int, rctx *RenderContext, isLast bool) {
 	authorWidth := min(width(file.author), maxWidth)
 
 	// Truncate author string if needed, being careful with multi-byte characters
@@ -349,14 +360,16 @@ func renderAuthor(out io.Writer, file *File, maxWidth int, rctx *RenderContext) 
 		}
 	}
 
-	// pad spaces to the right up to maxWidth
-	for i := 0; i < maxWidth-width(truncatedAuthor); i++ {
-		must(fmt.Fprintf(out, " "))
+	// pad spaces to the right up to maxWidth (unless this is the last column)
+	if !isLast {
+		for i := 0; i < maxWidth-width(truncatedAuthor); i++ {
+			must(fmt.Fprintf(out, " "))
+		}
 	}
 }
 
 // renderEmail renders the author email column
-func renderEmail(out io.Writer, file *File, maxWidth int, rctx *RenderContext) {
+func renderEmail(out io.Writer, file *File, maxWidth int, rctx *RenderContext, isLast bool) {
 	// Calculate how many characters we can display
 	emailWidth := min(width(file.authorEmail), maxWidth)
 
@@ -364,14 +377,16 @@ func renderEmail(out io.Writer, file *File, maxWidth int, rctx *RenderContext) {
 	truncatedEmail := truncateToWidth(file.authorEmail, emailWidth)
 	must(fmt.Fprintf(out, "%s", truncatedEmail))
 
-	// pad spaces to the right up to maxWidth
-	for i := 0; i < maxWidth-width(truncatedEmail); i++ {
-		must(fmt.Fprintf(out, " "))
+	// pad spaces to the right up to maxWidth (unless this is the last column)
+	if !isLast {
+		for i := 0; i < maxWidth-width(truncatedEmail); i++ {
+			must(fmt.Fprintf(out, " "))
+		}
 	}
 }
 
 // renderNumstat renders the numeric diffstat
-func renderNumstat(out io.Writer, file *File, maxWidth int, rctx *RenderContext) {
+func renderNumstat(out io.Writer, file *File, maxWidth int, rctx *RenderContext, isLast bool) {
 	if file.diffSum != nil {
 		numstat := fmt.Sprintf("+%d/-%d", file.diffSum.plus, file.diffSum.minus)
 		numstatWidth := min(width(numstat), maxWidth)
@@ -379,12 +394,14 @@ func renderNumstat(out io.Writer, file *File, maxWidth int, rctx *RenderContext)
 		truncatedNumstat := truncateToWidth(numstat, numstatWidth)
 		must(fmt.Fprintf(out, "%s", truncatedNumstat))
 
-		// pad spaces to the right up to maxWidth
-		for i := 0; i < maxWidth-width(truncatedNumstat); i++ {
-			must(fmt.Fprintf(out, " "))
+		// pad spaces to the right up to maxWidth (unless this is the last column)
+		if !isLast {
+			for i := 0; i < maxWidth-width(truncatedNumstat); i++ {
+				must(fmt.Fprintf(out, " "))
+			}
 		}
-	} else {
-		// pad spaces if no diffSum
+	} else if !isLast {
+		// pad spaces if no diffSum (unless this is the last column)
 		for range maxWidth {
 			must(fmt.Fprintf(out, " "))
 		}
@@ -392,7 +409,7 @@ func renderNumstat(out io.Writer, file *File, maxWidth int, rctx *RenderContext)
 }
 
 // renderCommitMessage renders the commit message with issue linkification
-func renderCommitMessage(out io.Writer, file *File, maxWidth int, rctx *RenderContext) {
+func renderCommitMessage(out io.Writer, file *File, maxWidth int, rctx *RenderContext, isLast bool) {
 	// Calculate how many characters we can display
 	messageWidth := min(width(file.message), maxWidth)
 
@@ -411,14 +428,16 @@ func renderCommitMessage(out io.Writer, file *File, maxWidth int, rctx *RenderCo
 		must(fmt.Fprintf(out, "%s", truncatedMessage))
 	}
 
-	// pad spaces to the right up to maxWidth
-	for i := 0; i < maxWidth-width(truncatedMessage); i++ {
-		must(fmt.Fprintf(out, " "))
+	// pad spaces to the right up to maxWidth (unless this is the last column)
+	if !isLast {
+		for i := 0; i < maxWidth-width(truncatedMessage); i++ {
+			must(fmt.Fprintf(out, " "))
+		}
 	}
 }
 
 // getColumnRenderer returns the renderer function for a column
-func getColumnRenderer(col Column) func(out io.Writer, file *File, maxWidth int, rctx *RenderContext) {
+func getColumnRenderer(col Column) func(out io.Writer, file *File, maxWidth int, rctx *RenderContext, isLast bool) {
 	switch col {
 	case ColStatus:
 		return renderStatus
@@ -441,6 +460,6 @@ func getColumnRenderer(col Column) func(out io.Writer, file *File, maxWidth int,
 	case ColCommitMessage:
 		return renderCommitMessage
 	default:
-		return func(out io.Writer, file *File, maxWidth int, rctx *RenderContext) {}
+		return func(out io.Writer, file *File, maxWidth int, rctx *RenderContext, isLast bool) {}
 	}
 }
