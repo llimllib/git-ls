@@ -892,10 +892,23 @@ func showColumns(out io.Writer, maxWidth int, files []*File, rctx *RenderContext
 			availableWidth := maxWidth - lineWidth
 			colWidth := min(colWidths[col], availableWidth)
 
+			// Check if there's room for another column after this one.
+			// If not, we shouldn't pad this column to avoid trailing spaces.
+			isLastColumn := (i == len(columns)-1) || (lineWidth+colWidth >= maxWidth)
+			if !isLastColumn && i+1 < len(columns) {
+				// Check if next column would fit (need space separator + min 1 char)
+				isLastColumn = (lineWidth+colWidth+1 >= maxWidth)
+			}
+
 			// Render the column
 			renderer := getColumnRenderer(col)
-			renderer(out, file, colWidth, rctx)
+			renderer(out, file, colWidth, rctx, isLastColumn)
 			lineWidth += colWidth
+
+			// If this was the last column that fits, stop rendering
+			if isLastColumn {
+				break
+			}
 		}
 
 		// Reset any remaining formatting (like strikethrough for deleted files)

@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"fmt"
 	"strings"
 	"testing"
 )
@@ -48,7 +49,7 @@ func TestRenderDiffMaxWidth(t *testing.T) {
 			var buf bytes.Buffer
 			rctx := &RenderContext{}
 
-			renderDiff(&buf, file, tt.maxWidth, rctx)
+			renderDiff(&buf, file, tt.maxWidth, rctx, false)
 
 			output := buf.String()
 			// Strip ANSI codes to measure actual visible width
@@ -332,7 +333,7 @@ func TestRenderStatusNerdFont(t *testing.T) {
 			var buf bytes.Buffer
 			rctx := &RenderContext{NerdFont: tt.nerdFont}
 
-			renderStatus(&buf, file, tt.maxWidth, rctx)
+			renderStatus(&buf, file, tt.maxWidth, rctx, false)
 
 			output := buf.String()
 			visibleOutput := stripANSI(output)
@@ -409,6 +410,88 @@ func TestCalculateColumnWidthsNerdFont(t *testing.T) {
 	widthsBoth := calculateColumnWidths(bothFiles, []Column{ColStatus}, rctxOn)
 	if widthsBoth[ColStatus] != 4 {
 		t.Errorf("With nerdfont MM status, width = %d, want 4", widthsBoth[ColStatus])
+	}
+}
+
+// TestTerminalWidthBug reproduces the issue where lines become blank when the
+// terminal width falls exactly at the end of the author name
+func TestTerminalWidthBug(t *testing.T) {
+	// Create a file with Christina Ahrens Roberts as the author
+	files := []*File{
+		{
+			entry:        &mockDirEntry{name: "test.py"},
+			status:       " M",
+			diffStat:     "++--",
+			shortHash:    "7863cc2b54",
+			hash:         "7863cc2b54abc123def456",
+			lastModified: "2026-03-26",
+			author:       "Christina Ahrens Roberts",
+			message:      "Update tests",
+		},
+	}
+
+	columns := AllColumns()
+	rctx := &RenderContext{
+		Dir: "/test",
+	}
+
+	// Calculate what the normal column widths would be
+	colWidths := calculateColumnWidths(files, columns, rctx)
+
+	// Calculate the cumulative widths up to and including the author column
+	cumulativeWidth := 0
+	for i, col := range columns {
+		if i > 0 {
+			cumulativeWidth += 1 // space between columns
+		}
+		cumulativeWidth += colWidths[col]
+
+		if col == ColAuthor {
+			t.Logf("Width up to end of author column: %d", cumulativeWidth)
+			break
+		}
+	}
+
+	// Test with terminal widths around the author column boundary
+	testWidths := []int{
+		cumulativeWidth - 5, // Middle of author name
+		cumulativeWidth - 1, // Just before end of author name
+		cumulativeWidth,     // Exactly at end of author name
+		cumulativeWidth + 1, // One character after author name
+	}
+
+	for _, maxWidth := range testWidths {
+		t.Run(fmt.Sprintf("width_%d", maxWidth), func(t *testing.T) {
+			var buf bytes.Buffer
+			showColumns(&buf, maxWidth, files, rctx, columns)
+
+			output := buf.String()
+			lines := strings.Split(output, "\n")
+
+			for i, line := range lines {
+				if line == "" {
+					continue
+				}
+
+				// Strip ANSI codes to measure visible width
+				visibleLine := stripANSI(line)
+				actualWidth := len(visibleLine)
+
+				t.Logf("Terminal width %d: Line %d visible width = %d", maxWidth, i+1, actualWidth)
+				t.Logf("  Raw: %q", line)
+				t.Logf("  Visible: %q", visibleLine)
+
+				// The line should not be empty (all whitespace)
+				if strings.TrimSpace(visibleLine) == "" {
+					t.Errorf("Line %d is blank at terminal width %d", i+1, maxWidth)
+				}
+
+				// The line should not exceed maxWidth
+				if actualWidth > maxWidth {
+					t.Errorf("Line %d exceeds maxWidth: got %d chars, want <= %d", i+1, actualWidth, maxWidth)
+				}
+			}
+		})
 	}
 }
 
