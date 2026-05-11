@@ -627,6 +627,16 @@ func run() int {
 	} else {
 		showColumns(os.Stdout, maxWidth, files, rctx, formatColumns)
 	}
+
+	// Print total +/- summary if there are any diffs
+	if nFiles, totalPlus, totalMinus := totalDiffStats(files); totalPlus > 0 || totalMinus > 0 {
+		fileWord := "files"
+		if nFiles == 1 {
+			fileWord = "file"
+		}
+		fmt.Printf("\n%d %s %s+%d%s %s-%d%s\n", nFiles, fileWord, GREEN, totalPlus, RESET, RED, totalMinus, RESET)
+	}
+
 	return 0
 }
 
@@ -1388,6 +1398,22 @@ func gitDiffStat() []byte {
 		log.Fatalf("Diffstat error: %v", err)
 	}
 	return output
+}
+
+// totalDiffStats sums up the +/- across all files that have diff information
+// and returns the count of files with diffs, total additions, and total deletions.
+func totalDiffStats(files []*File) (int, int, int) {
+	nFiles := 0
+	totalPlus := 0
+	totalMinus := 0
+	for _, file := range files {
+		if file.diffSum != nil {
+			nFiles++
+			totalPlus += file.diffSum.plus
+			totalMinus += file.diffSum.minus
+		}
+	}
+	return nFiles, totalPlus, totalMinus
 }
 
 func parseDiffStat(diffStat []byte, files []*File) {
