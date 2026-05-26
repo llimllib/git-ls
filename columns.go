@@ -6,15 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-
-	"github.com/mattn/go-runewidth"
 )
-
-// truncateToWidth truncates a string to fit within the specified visual width,
-// properly handling Unicode characters including diacritics
-func truncateToWidth(s string, maxWidth int) string {
-	return runewidth.Truncate(s, maxWidth, "")
-}
 
 // Nerd Font icons for individual git status characters.
 // See https://www.nerdfonts.com/cheat-sheet for the full icon list.
@@ -221,12 +213,13 @@ func renderStatus(out io.Writer, file *File, maxWidth int, rctx *RenderContext, 
 		} else {
 			statusStr = file.status
 		}
-		visibleWidth := width(statusStr)
+		truncated := truncateToWidth(statusStr, maxWidth)
+		visibleWidth := width(truncated)
 		// Right-align: pad with spaces on the left
 		for i := 0; i < maxWidth-visibleWidth; i++ {
 			must(fmt.Fprintf(out, " "))
 		}
-		must(fmt.Fprintf(out, "%s", statusStr))
+		must(fmt.Fprintf(out, "%s", truncated))
 		// No right padding needed for status since it's right-aligned
 	}
 }
@@ -234,9 +227,10 @@ func renderStatus(out io.Writer, file *File, maxWidth int, rctx *RenderContext, 
 // renderDiff renders the diff graph column
 func renderDiff(out io.Writer, file *File, maxWidth int, rctx *RenderContext, isLast bool) {
 	if maxWidth > 0 {
-		must(fmt.Fprintf(out, "%s", file.diffStat))
+		truncated := truncateToWidth(file.diffStat, maxWidth)
+		must(fmt.Fprintf(out, "%s", truncated))
 		if !isLast {
-			for i := 0; i < maxWidth-width(file.diffStat); i++ {
+			for i := 0; i < maxWidth-width(truncated); i++ {
 				must(fmt.Fprintf(out, " "))
 			}
 		}
@@ -245,6 +239,9 @@ func renderDiff(out io.Writer, file *File, maxWidth int, rctx *RenderContext, is
 
 // renderFilename renders the filename column with colors and hyperlinks
 func renderFilename(out io.Writer, file *File, maxWidth int, rctx *RenderContext, isLast bool) {
+	truncatedName := truncateToWidth(file.Name(), maxWidth)
+	truncatedWidth := width(truncatedName)
+
 	if file.isDeleted {
 		must(fmt.Fprintf(out, "%s%s", RED, STRIKEOUT))
 	} else if file.isDir {
@@ -255,15 +252,15 @@ func renderFilename(out io.Writer, file *File, maxWidth int, rctx *RenderContext
 
 	// link the file name to the file's location (but not for deleted files)
 	if file.isDeleted {
-		must(fmt.Fprintf(out, "%s", file.Name()))
+		must(fmt.Fprintf(out, "%s", truncatedName))
 	} else {
 		fileURL := fmt.Sprintf("file://%s%s", must(os.Hostname()), filepath.Join(rctx.Dir, file.Name()))
-		must(fmt.Fprintf(out, "%s", link(fileURL, file.Name())))
+		must(fmt.Fprintf(out, "%s", link(fileURL, truncatedName)))
 	}
 
 	// pad spaces to the right up to maxWidth (unless this is the last column)
 	if !isLast {
-		for i := 0; i < maxWidth-width(file.Name()); i++ {
+		for i := 0; i < maxWidth-truncatedWidth; i++ {
 			must(fmt.Fprintf(out, " "))
 		}
 	}
@@ -278,7 +275,8 @@ func renderFilename(out io.Writer, file *File, maxWidth int, rctx *RenderContext
 func renderShorthash(out io.Writer, file *File, maxWidth int, rctx *RenderContext, isLast bool) {
 	if maxWidth > 0 {
 		shortHash := file.shortHash
-		shortHashWidth := min(width(shortHash), maxWidth)
+		truncated := truncateToWidth(shortHash, maxWidth)
+		truncatedWidth := width(truncated)
 		var color string
 		if rctx.MonoHash {
 			color = CYAN
@@ -288,14 +286,14 @@ func renderShorthash(out io.Writer, file *File, maxWidth int, rctx *RenderContex
 
 		if len(rctx.GithubURL) > 0 && shortHash != "" {
 			commitURL := fmt.Sprintf("%s/commit/%s", rctx.GithubURL, file.hash)
-			must(fmt.Fprintf(out, "%s%s%s", color, link(commitURL, shortHash[:min(len(shortHash), maxWidth)]), RESET))
+			must(fmt.Fprintf(out, "%s%s%s", color, link(commitURL, truncated), RESET))
 		} else {
-			must(fmt.Fprintf(out, "%s%s%s", color, shortHash[:min(len(shortHash), maxWidth)], RESET))
+			must(fmt.Fprintf(out, "%s%s%s", color, truncated, RESET))
 		}
 
 		// pad spaces to the right up to maxWidth (unless this is the last column)
 		if !isLast {
-			for i := 0; i < maxWidth-shortHashWidth; i++ {
+			for i := 0; i < maxWidth-truncatedWidth; i++ {
 				must(fmt.Fprintf(out, " "))
 			}
 		}
@@ -311,16 +309,18 @@ func renderHash(out io.Writer, file *File, maxWidth int, rctx *RenderContext, is
 		} else {
 			color = hashToColor(file.hash)
 		}
+		truncated := truncateToWidth(file.hash, maxWidth)
+		truncatedWidth := width(truncated)
 		if len(rctx.GithubURL) > 0 && file.hash != "" {
 			commitURL := fmt.Sprintf("%s/commit/%s", rctx.GithubURL, file.hash)
-			must(fmt.Fprintf(out, "%s%s%s", color, link(commitURL, file.hash), RESET))
+			must(fmt.Fprintf(out, "%s%s%s", color, link(commitURL, truncated), RESET))
 		} else {
-			must(fmt.Fprintf(out, "%s%s%s", color, file.hash, RESET))
+			must(fmt.Fprintf(out, "%s%s%s", color, truncated, RESET))
 		}
 
 		// pad spaces to the right up to maxWidth (unless this is the last column)
 		if !isLast {
-			for i := 0; i < maxWidth-width(file.hash); i++ {
+			for i := 0; i < maxWidth-truncatedWidth; i++ {
 				must(fmt.Fprintf(out, " "))
 			}
 		}
@@ -329,10 +329,11 @@ func renderHash(out io.Writer, file *File, maxWidth int, rctx *RenderContext, is
 
 // renderDate renders the date column
 func renderDate(out io.Writer, file *File, maxWidth int, rctx *RenderContext, isLast bool) {
-	must(fmt.Fprintf(out, "%s", file.lastModified))
+	truncated := truncateToWidth(file.lastModified, maxWidth)
+	must(fmt.Fprintf(out, "%s", truncated))
 	// pad spaces to the right up to maxWidth (unless this is the last column)
 	if !isLast {
-		for i := 0; i < maxWidth-width(file.lastModified); i++ {
+		for i := 0; i < maxWidth-width(truncated); i++ {
 			must(fmt.Fprintf(out, " "))
 		}
 	}
