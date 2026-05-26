@@ -713,11 +713,18 @@ func makeDiffGraph(file *File, width int) string {
 			strings.Repeat("-", minus),
 			RESET)
 	}
+	scaledPlus := scaleLinear(plus, width, plus+minus)
+	scaledMinus := scaleLinear(minus, width, plus+minus)
+	// scaleLinear guarantees at least 1 for non-zero values, so the sum
+	// can exceed width. Cap the total to width, preserving the ratio.
+	if scaledPlus+scaledMinus > width {
+		scaledMinus = width - scaledPlus
+	}
 	return fmt.Sprintf("%s%s%s%s%s",
 		GREEN,
-		strings.Repeat("+", scaleLinear(plus, width, plus+minus)),
+		strings.Repeat("+", scaledPlus),
 		RED,
-		strings.Repeat("-", scaleLinear(minus, width, plus+minus)),
+		strings.Repeat("-", scaledMinus),
 		RESET)
 }
 
