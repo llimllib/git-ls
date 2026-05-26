@@ -202,6 +202,18 @@ func truncateToWidth(s string, maxWidth int) string {
 		i += size
 	}
 
+	// Drain any trailing ANSI escape sequences (e.g. RESET) that follow
+	// the last visible character. These have zero visual width and must
+	// be preserved to avoid color bleeding into subsequent columns.
+	for i < len(s) {
+		if n := skipANSI(s, i); n > 0 {
+			result.WriteString(s[i : i+n])
+			i += n
+		} else {
+			break
+		}
+	}
+
 	return result.String()
 }
 

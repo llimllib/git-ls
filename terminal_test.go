@@ -310,19 +310,20 @@ func TestTruncateToWidth(t *testing.T) {
 
 func TestTruncateToWidthPreservesANSI(t *testing.T) {
 	// Verify that ANSI codes pass through (not stripped) when text fits.
-	// Note: trailing ANSI codes after visible content may be omitted since
-	// truncateToWidth stops once visible width is consumed.
+	// Trailing ANSI codes (like RESET) after the last visible character must
+	// be preserved to avoid color bleeding into subsequent output.
 	input := "\x1b[32mgreen\x1b[0m"
 	got := truncateToWidth(input, 5)
-	// The fast path (no ANSI) won't apply here, so the slow path will
-	// include the leading color but stop after 'green' since width is met.
-	// The reset code comes after the visible chars, so it may or may not be included.
 	gotVisible := stripANSI(got)
 	if gotVisible != "green" {
 		t.Errorf("truncateToWidth visible text = %q, want %q", gotVisible, "green")
 	}
 	if !strings.Contains(got, "\x1b[32m") {
 		t.Errorf("truncateToWidth should preserve leading ANSI: %q", got)
+	}
+	// Trailing RESET must be preserved
+	if !strings.Contains(got, "\x1b[0m") {
+		t.Errorf("truncateToWidth should preserve trailing RESET: %q", got)
 	}
 
 	// Verify color code is kept even when text is truncated
@@ -332,6 +333,16 @@ func TestTruncateToWidthPreservesANSI(t *testing.T) {
 	}
 	if width(got) != 3 {
 		t.Errorf("truncateToWidth visible width = %d, want 3", width(got))
+	}
+
+	// Verify diff graph pattern: GREEN+++RED--RESET doesn't lose RESET
+	diffGraph := "\x1b[32m+++\x1b[31m--\x1b[0m"
+	got = truncateToWidth(diffGraph, 5)
+	if !strings.HasSuffix(got, "\x1b[0m") {
+		t.Errorf("truncateToWidth should preserve trailing RESET in diff graph: %q", got)
+	}
+	if width(got) != 5 {
+		t.Errorf("truncateToWidth diff graph visible width = %d, want 5", width(got))
 	}
 }
 
