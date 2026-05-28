@@ -44,6 +44,16 @@ terminal font).
 Only show files that have changes (appear in git status). This filters out
 unmodified tracked files and shows only files with status indicators (modified,
 added, deleted, renamed, etc.).
+.TP
+.BR \-s ", " \-\-sort
+Sort files by last git modification date, most recent first.
+Files without a date (ignored, untracked, .git) are placed at
+the bottom in alphabetical order.
+.TP
+.B \-\-debug
+Print debug timing information to stderr, including which file
+took the longest to find in git history and warnings for files
+not found (possibly beyond the history limit).
 .SH EXAMPLES
 .TP
 .B git ls
@@ -57,6 +67,9 @@ Show custom columns: filename, status, and author only.
 .TP
 .B git ls \-\-diffWidth=8
 Show a wider diffstat graph (8 characters instead of 4).
+.TP
+.B git ls \-\-sort
+Show files sorted by last git modification date, most recent first.
 .SH TERMINAL SUPPORT
 For the best experience, use a terminal that supports OSC8 hyperlinks, such as:
 .IP \(bu 2
