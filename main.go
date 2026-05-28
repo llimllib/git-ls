@@ -41,6 +41,7 @@ type File struct {
 	hash         string // full hash
 	shortHash    string // Git's abbreviated hash (length varies by repo size)
 	lastModified string
+	commitTime   int64 // unix timestamp of the commit for precise sorting
 	message      string
 	isDir        bool
 	isExe        bool
@@ -321,6 +322,11 @@ OPTIONS
         filters out unmodified tracked files and shows only files with
         status indicators (modified, added, deleted, renamed, etc.)
 
+    -s, --sort
+        Sort files by last git modification date, most recent first.
+        Files without a date (ignored, untracked, .git) are placed at
+        the bottom in alphabetical order.
+
     --debug
         Print debug timing information to stderr, including which file
         took the longest to find in git history and warnings for files
@@ -340,6 +346,7 @@ func run() int {
 	monoHash := false
 	nerdFont := false
 	changedOnly := false
+	sortByDate := false
 	debug := false
 	var formatColumns []Column
 	for len(argv) > 0 {
@@ -359,6 +366,9 @@ func run() int {
 			argv = argv[1:]
 		} else if argv[0] == "--changed-only" || argv[0] == "-c" {
 			changedOnly = true
+			argv = argv[1:]
+		} else if argv[0] == "--sort" || argv[0] == "-s" {
+			sortByDate = true
 			argv = argv[1:]
 		} else if strings.HasPrefix(argv[0], "--diffWidth") {
 			if len(argv) == 1 {
@@ -523,10 +533,31 @@ func run() int {
 		}
 	}
 
-	// Sort files by name
-	slices.SortFunc(files, func(a, b *File) int {
-		return strings.Compare(strings.ToLower(a.Name()), strings.ToLower(b.Name()))
-	})
+	// Sort files
+	if sortByDate {
+		slices.SortStableFunc(files, func(a, b *File) int {
+			// Files without dates go to the bottom
+			if a.commitTime == 0 && b.commitTime == 0 {
+				return strings.Compare(strings.ToLower(a.Name()), strings.ToLower(b.Name()))
+			}
+			if a.commitTime == 0 {
+				return 1
+			}
+			if b.commitTime == 0 {
+				return -1
+			}
+			// Descending: newer first
+			if b.commitTime != a.commitTime {
+				return int(b.commitTime - a.commitTime)
+			}
+			// Same timestamp: fall back to alphabetical
+			return strings.Compare(strings.ToLower(a.Name()), strings.ToLower(b.Name()))
+		})
+	} else {
+		slices.SortFunc(files, func(a, b *File) int {
+			return strings.Compare(strings.ToLower(a.Name()), strings.ToLower(b.Name()))
+		})
+	}
 
 	// Use default columns if not specified
 	if len(formatColumns) == 0 {
@@ -1077,7 +1108,7 @@ func parseGitLog(files []*File, timer *DebugTimer) error {
 		"--name-only",
 		"--relative",
 		"--date=format:%Y-%m-%d",
-		"--format=%H%x00%h%x00%ad%x00%aN%x00%aE%x00%s%x00",
+		"--format=%H%x00%h%x00%ad%x00%aN%x00%aE%x00%s%x00%at%x00",
 		"-n", HistoryLimit,
 		"HEAD", "--", ".")
 
@@ -1098,6 +1129,7 @@ func parseGitLog(files []*File, timer *DebugTimer) error {
 		author      string
 		authorEmail string
 		message     string
+		timestamp   int64
 	}
 
 	// Track lines since last find for early exit. This counts lines of output
@@ -1118,13 +1150,14 @@ func parseGitLog(files []*File, timer *DebugTimer) error {
 		// Check if this is a commit metadata line (contains null bytes)
 		if strings.Contains(line, "\x00") {
 			parts := strings.Split(line, "\x00")
-			if len(parts) >= 6 {
+			if len(parts) >= 7 {
 				currentCommit.hash = parts[0]
 				currentCommit.shortHash = parts[1]
 				currentCommit.date = parts[2]
 				currentCommit.author = parts[3]
 				currentCommit.authorEmail = parts[4]
 				currentCommit.message = parts[5]
+				currentCommit.timestamp, _ = strconv.ParseInt(parts[6], 10, 64)
 			}
 		} else if currentCommit.hash != "" {
 			// This is a filename line
@@ -1152,6 +1185,7 @@ func parseGitLog(files []*File, timer *DebugTimer) error {
 				file.hash = currentCommit.hash
 				file.shortHash = currentCommit.shortHash
 				file.lastModified = currentCommit.date
+				file.commitTime = currentCommit.timestamp
 				file.author = currentCommit.author
 				file.authorEmail = currentCommit.authorEmail
 				file.message = currentCommit.message
