@@ -1405,3 +1405,80 @@ func TestSubdirectoryTrackedFiles(t *testing.T) {
 		t.Errorf("node_modules should be marked as ignored (I), got %q", status)
 	}
 }
+
+func TestSortFilesByDate(t *testing.T) {
+	files := []*File{
+		{name: "old.go", commitTime: 1000},
+		{name: "new.go", commitTime: 3000},
+		{name: "mid.go", commitTime: 2000},
+		{name: "ignored.go", status: "I", commitTime: 0},
+		{name: "untracked.go", status: "??", commitTime: 0},
+		{name: ".git", status: "*", commitTime: 0},
+	}
+
+	sortFilesByDate(files)
+
+	// Files with timestamps should be sorted descending
+	expectedOrder := []string{"new.go", "mid.go", "old.go", ".git", "ignored.go", "untracked.go"}
+	for i, expected := range expectedOrder {
+		if files[i].Name() != expected {
+			t.Errorf("position %d: got %q, want %q", i, files[i].Name(), expected)
+		}
+	}
+}
+
+func TestSortFilesByDateSameTimestamp(t *testing.T) {
+	// When timestamps are equal, files should be sorted alphabetically
+	files := []*File{
+		{name: "zebra.go", commitTime: 1000},
+		{name: "alpha.go", commitTime: 1000},
+		{name: "middle.go", commitTime: 1000},
+	}
+
+	sortFilesByDate(files)
+
+	expectedOrder := []string{"alpha.go", "middle.go", "zebra.go"}
+	for i, expected := range expectedOrder {
+		if files[i].Name() != expected {
+			t.Errorf("position %d: got %q, want %q", i, files[i].Name(), expected)
+		}
+	}
+}
+
+func TestSortFilesByDateUndatedAtBottom(t *testing.T) {
+	// All undated files should appear after all dated files
+	files := []*File{
+		{name: "untracked.go", status: "??", commitTime: 0},
+		{name: "dated.go", commitTime: 500},
+		{name: "ignored.go", status: "I", commitTime: 0},
+		{name: "also-dated.go", commitTime: 100},
+	}
+
+	sortFilesByDate(files)
+
+	// Dated files first (descending), then undated (alphabetical)
+	expectedOrder := []string{"dated.go", "also-dated.go", "ignored.go", "untracked.go"}
+	for i, expected := range expectedOrder {
+		if files[i].Name() != expected {
+			t.Errorf("position %d: got %q, want %q", i, files[i].Name(), expected)
+		}
+	}
+}
+
+func TestSortFilesByName(t *testing.T) {
+	files := []*File{
+		{name: "Zebra.go"},
+		{name: "alpha.go"},
+		{name: "Beta.go"},
+	}
+
+	sortFilesByName(files)
+
+	// Case-insensitive alphabetical
+	expectedOrder := []string{"alpha.go", "Beta.go", "Zebra.go"}
+	for i, expected := range expectedOrder {
+		if files[i].Name() != expected {
+			t.Errorf("position %d: got %q, want %q", i, files[i].Name(), expected)
+		}
+	}
+}

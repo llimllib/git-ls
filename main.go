@@ -535,28 +535,9 @@ func run() int {
 
 	// Sort files
 	if sortByDate {
-		slices.SortStableFunc(files, func(a, b *File) int {
-			// Files without dates go to the bottom
-			if a.commitTime == 0 && b.commitTime == 0 {
-				return strings.Compare(strings.ToLower(a.Name()), strings.ToLower(b.Name()))
-			}
-			if a.commitTime == 0 {
-				return 1
-			}
-			if b.commitTime == 0 {
-				return -1
-			}
-			// Descending: newer first
-			if b.commitTime != a.commitTime {
-				return int(b.commitTime - a.commitTime)
-			}
-			// Same timestamp: fall back to alphabetical
-			return strings.Compare(strings.ToLower(a.Name()), strings.ToLower(b.Name()))
-		})
+		sortFilesByDate(files)
 	} else {
-		slices.SortFunc(files, func(a, b *File) int {
-			return strings.Compare(strings.ToLower(a.Name()), strings.ToLower(b.Name()))
-		})
+		sortFilesByName(files)
 	}
 
 	// Use default columns if not specified
@@ -757,6 +738,33 @@ func makeDiffGraph(file *File, width int) string {
 		RED,
 		strings.Repeat("-", scaledMinus),
 		RESET)
+}
+
+// sortFilesByDate sorts files by commit timestamp descending (most recent first).
+// Files without a timestamp (commitTime == 0) go to the bottom, sorted alphabetically.
+func sortFilesByDate(files []*File) {
+	slices.SortStableFunc(files, func(a, b *File) int {
+		if a.commitTime == 0 && b.commitTime == 0 {
+			return strings.Compare(strings.ToLower(a.Name()), strings.ToLower(b.Name()))
+		}
+		if a.commitTime == 0 {
+			return 1
+		}
+		if b.commitTime == 0 {
+			return -1
+		}
+		if b.commitTime != a.commitTime {
+			return int(b.commitTime - a.commitTime)
+		}
+		return strings.Compare(strings.ToLower(a.Name()), strings.ToLower(b.Name()))
+	})
+}
+
+// sortFilesByName sorts files alphabetically by name (case-insensitive).
+func sortFilesByName(files []*File) {
+	slices.SortFunc(files, func(a, b *File) int {
+		return strings.Compare(strings.ToLower(a.Name()), strings.ToLower(b.Name()))
+	})
 }
 
 func showColumns(out io.Writer, maxWidth int, files []*File, rctx *RenderContext, columns []Column) {
