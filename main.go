@@ -1107,8 +1107,7 @@ func parseGitLog(files []*File, timer *DebugTimer) error {
 	cmd := exec.Command("git", "-c", "core.fsmonitor=false", "log",
 		"--name-only",
 		"--relative",
-		"--date=format:%Y-%m-%d",
-		"--format=%H%x00%h%x00%ad%x00%aN%x00%aE%x00%s%x00%at%x00",
+		"--format=%H%x00%h%x00%aN%x00%aE%x00%s%x00%at%x00",
 		"-n", HistoryLimit,
 		"HEAD", "--", ".")
 
@@ -1125,7 +1124,6 @@ func parseGitLog(files []*File, timer *DebugTimer) error {
 	var currentCommit struct {
 		hash        string
 		shortHash   string
-		date        string
 		author      string
 		authorEmail string
 		message     string
@@ -1150,14 +1148,13 @@ func parseGitLog(files []*File, timer *DebugTimer) error {
 		// Check if this is a commit metadata line (contains null bytes)
 		if strings.Contains(line, "\x00") {
 			parts := strings.Split(line, "\x00")
-			if len(parts) >= 7 {
+			if len(parts) >= 6 {
 				currentCommit.hash = parts[0]
 				currentCommit.shortHash = parts[1]
-				currentCommit.date = parts[2]
-				currentCommit.author = parts[3]
-				currentCommit.authorEmail = parts[4]
-				currentCommit.message = parts[5]
-				currentCommit.timestamp, _ = strconv.ParseInt(parts[6], 10, 64)
+				currentCommit.author = parts[2]
+				currentCommit.authorEmail = parts[3]
+				currentCommit.message = parts[4]
+				currentCommit.timestamp, _ = strconv.ParseInt(parts[5], 10, 64)
 			}
 		} else if currentCommit.hash != "" {
 			// This is a filename line
@@ -1184,8 +1181,8 @@ func parseGitLog(files []*File, timer *DebugTimer) error {
 				// Found it! Populate the file info
 				file.hash = currentCommit.hash
 				file.shortHash = currentCommit.shortHash
-				file.lastModified = currentCommit.date
 				file.commitTime = currentCommit.timestamp
+				file.lastModified = time.Unix(currentCommit.timestamp, 0).UTC().Format("2006-01-02")
 				file.author = currentCommit.author
 				file.authorEmail = currentCommit.authorEmail
 				file.message = currentCommit.message
