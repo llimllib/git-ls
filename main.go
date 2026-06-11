@@ -17,7 +17,7 @@ import (
 	"time"
 )
 
-const VERSION = "7.0.1"
+const VERSION = "7.1.0"
 
 // HistoryLimit is the maximum number of commits to review; we'll exit if we
 // find all files before it; if a file was more than this many commits ago we
