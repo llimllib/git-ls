@@ -53,7 +53,7 @@ brews:
     license: "Unlicense"
     repository:
       owner: llimllib
-      name: homebrew-tap
+      name: homebrew-git-ls
       branch: main
       token: "{{ .Env.TAP_GITHUB_TOKEN }}"
     install: |
