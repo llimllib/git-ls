@@ -55,6 +55,7 @@ brews:
       owner: llimllib
       name: homebrew-git-ls
       branch: main
+      token: "{{ .Env.TAP_GITHUB_TOKEN }}"
     install: |
       bin.install "git-ls"
       man1.install "manpage/git-ls.1"
